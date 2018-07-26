@@ -62,6 +62,21 @@ DEFAULT_ACTION_SET = (
     (0, 0, 0, 0, 1, 0, 0),    # Fire.
 )
 
+class PyProcessGym(object):
+  """gym wrapper for PyProcess."""
+  def __init__(self, level):
+    self._env = gym.make(level)
+
+  def _reset(self):
+    _observation = self._env.reset()
+
+  def initial(self):
+    self._reset()
+    return self._observation
+
+  def step(self, action):
+    observation, reward, done, info = _env.step(action)
+    return reward, done, observation
 
 class PyProcessDmLab(object):
   """DeepMind Lab wrapper for PyProcess."""
