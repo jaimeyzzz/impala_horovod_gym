@@ -24,7 +24,6 @@ import functools
 import os
 import sys
 
-import dmlab30
 import environments
 import numpy as np
 import py_process
@@ -417,9 +416,6 @@ def build_learner(agent, agent_state, env_outputs, agent_outputs):
 
 def create_environment(level_name, seed, is_test=False):
   """Creates an environment wrapped in a `FlowEnvironment`."""
-  if level_name in dmlab30.ALL_LEVELS:
-    level_name = 'contributed/dmlab30/' + level_name
-
   # Note, you may want to use a level cache to speed of compilation of
   # environment maps. See the documentation for the Python interface of DeepMind
   # Lab.
@@ -617,25 +613,6 @@ def train(action_set, level_names):
                               simple_value=episode_frames)
             summary_writer.add_summary(summary, num_env_frames_v)
 
-            if FLAGS.level_name == 'dmlab30':
-              level_returns[level_name].append(episode_return)
-
-          if (FLAGS.level_name == 'dmlab30' and
-              min(map(len, level_returns.values())) >= 1):
-            no_cap = dmlab30.compute_human_normalized_score(level_returns,
-                                                            per_level_cap=None)
-            cap_100 = dmlab30.compute_human_normalized_score(level_returns,
-                                                             per_level_cap=100)
-            summary = tf.summary.Summary()
-            summary.value.add(
-                tag='dmlab30/training_no_cap', simple_value=no_cap)
-            summary.value.add(
-                tag='dmlab30/training_cap_100', simple_value=cap_100)
-            summary_writer.add_summary(summary, num_env_frames_v)
-
-            # Clear level scores.
-            level_returns = {level_name: [] for level_name in level_names}
-
       else:
         # Execute actors (they just need to enqueue their output).
         while True:
@@ -670,24 +647,11 @@ def test(action_set, level_names):
             tf.logging.info('Mean episode return: %f', np.mean(returns))
             break
 
-  if FLAGS.level_name == 'dmlab30':
-    no_cap = dmlab30.compute_human_normalized_score(level_returns,
-                                                    per_level_cap=None)
-    cap_100 = dmlab30.compute_human_normalized_score(level_returns,
-                                                     per_level_cap=100)
-    tf.logging.info('No cap.: %f Cap 100: %f', no_cap, cap_100)
-
-
 def main(_):
   tf.logging.set_verbosity(tf.logging.INFO)
 
   action_set = environments.DEFAULT_ACTION_SET
-  if FLAGS.level_name == 'dmlab30' and FLAGS.mode == 'train':
-    level_names = dmlab30.LEVEL_MAPPING.keys()
-  elif FLAGS.level_name == 'dmlab30' and FLAGS.mode == 'test':
-    level_names = dmlab30.LEVEL_MAPPING.values()
-  else:
-    level_names = [FLAGS.level_name]
+  level_names = [FLAGS.level_name]
 
   if FLAGS.mode == 'train':
     train(action_set, level_names)
