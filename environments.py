@@ -49,6 +49,7 @@ class LocalLevelCache(object):
       tf.gfile.Copy(pk3_path, path)
 
 
+"""
 DEFAULT_ACTION_SET = (
     (0, 0, 0, 1, 0, 0, 0),    # Forward
     (0, 0, 0, -1, 0, 0, 0),   # Backward
@@ -60,6 +61,14 @@ DEFAULT_ACTION_SET = (
     (20, 0, 0, 1, 0, 0, 0),   # Look Right + Forward
     (0, 0, 0, 0, 1, 0, 0),    # Fire.
 )
+"""
+
+DEFAULT_ACTION_SET = (
+    (0), 
+    (1), 
+    (2), 
+    (3),
+)
 
 class PyProcessGym(object):
   """gym wrapper for PyProcess."""
@@ -67,17 +76,16 @@ class PyProcessGym(object):
     self._env = make_final(level, True, True, True, False)
 
   def _reset(self):
-    _observation = self._env.reset()
+    return self._env.reset()
 
   def initial(self):
-    self._reset()
-    return self._observation
+    return [self._reset(), '']
 
   def step(self, action):
-    _observation, reward, done, info = _env.step(action)
+    observation, reward, done, info = _env.step(action)
     if done:
-        self._reset()
-    return reward, done, _observation
+        observation = self._reset()
+    return reward, done, [observation, '']
 
   def close():
     pass

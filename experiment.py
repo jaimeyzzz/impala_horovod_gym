@@ -44,7 +44,7 @@ nest = tf.contrib.framework.nest
 flags = tf.app.flags
 FLAGS = tf.app.flags.FLAGS
 
-flags.DEFINE_string('logdir', '/tmp/agent', 'TensorFlow log directory.')
+flags.DEFINE_string('logdir', 'log/agent', 'TensorFlow log directory.')
 flags.DEFINE_enum('mode', 'train', ['train', 'test'], 'Training or test mode.')
 
 # Flags used for testing.
@@ -79,8 +79,8 @@ flags.DEFINE_string(
 flags.DEFINE_string('level_name', 'BreakoutNoFrameskip-v4',
                     '''Level name or \'dmlab30\' for the full DmLab-30 suite '''
                     '''with levels assigned round robin to the actors.''')
-flags.DEFINE_integer('width', 96, 'Width of observation.')
-flags.DEFINE_integer('height', 72, 'Height of observation.')
+flags.DEFINE_integer('width', 84, 'Width of observation.')
+flags.DEFINE_integer('height', 84, 'Height of observation.')
 
 # Optimizer settings.
 flags.DEFINE_float('learning_rate', 0.00048, 'Learning rate.')
@@ -429,8 +429,8 @@ def create_environment(level_name, seed, is_test=False):
     # Mixer seed for evalution, see
     # https://github.com/deepmind/lab/blob/master/docs/users/python_api.md
     config['mixerSeed'] = 0x600D5EED
-  p = py_process.PyProcess(environments.PyProcessGym, level_name, config,
-                           FLAGS.num_action_repeats, seed)
+  p = py_process.PyProcess(environments.PyProcessGym, level_name, config)
+                           #FLAGS.num_action_repeats, seed)
   return environments.FlowEnvironment(p.proxy)
 
 
