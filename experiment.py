@@ -76,7 +76,7 @@ flags.DEFINE_string(
     'dataset_path', '',
     'Path to dataset needed for psychlab_*, see '
     'https://github.com/deepmind/lab/tree/master/data/brady_konkle_oliva2008')
-flags.DEFINE_string('level_name', 'explore_goal_locations_small',
+flags.DEFINE_string('level_name', 'BreakoutNoFrameskip-v4',
                     '''Level name or \'dmlab30\' for the full DmLab-30 suite '''
                     '''with levels assigned round robin to the actors.''')
 flags.DEFINE_integer('width', 96, 'Width of observation.')
@@ -429,7 +429,7 @@ def create_environment(level_name, seed, is_test=False):
     # Mixer seed for evalution, see
     # https://github.com/deepmind/lab/blob/master/docs/users/python_api.md
     config['mixerSeed'] = 0x600D5EED
-  p = py_process.PyProcess(environments.PyProcessDmLab, level_name, config,
+  p = py_process.PyProcess(environments.PyProcessGym, level_name, config,
                            FLAGS.num_action_repeats, seed)
   return environments.FlowEnvironment(p.proxy)
 

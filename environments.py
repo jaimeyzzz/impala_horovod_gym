@@ -24,8 +24,7 @@ import os.path
 import numpy as np
 import tensorflow as tf
 
-import gym
-
+from atari_env import make_final
 
 nest = tf.contrib.framework.nest
 
@@ -64,8 +63,8 @@ DEFAULT_ACTION_SET = (
 
 class PyProcessGym(object):
   """gym wrapper for PyProcess."""
-  def __init__(self, level):
-    self._env = gym.make(level)
+  def __init__(self, level, config):
+    self._env = make_final(level, True, True, True, False)
 
   def _reset(self):
     _observation = self._env.reset()
@@ -75,49 +74,13 @@ class PyProcessGym(object):
     return self._observation
 
   def step(self, action):
-    observation, reward, done, info = _env.step(action)
-    return reward, done, observation
-
-class PyProcessDmLab(object):
-  """DeepMind Lab wrapper for PyProcess."""
-
-  def __init__(self, level, config, num_action_repeats, seed,
-               runfiles_path=None, level_cache=None):
-    self._num_action_repeats = num_action_repeats
-    self._random_state = np.random.RandomState(seed=seed)
-    if runfiles_path:
-      deepmind_lab.set_runfiles_path(runfiles_path)
-    config = {k: str(v) for k, v in config.iteritems()}
-    self._observation_spec = ['RGB_INTERLEAVED', 'INSTR']
-    self._env = deepmind_lab.Lab(
-        level=level,
-        observations=self._observation_spec,
-        config=config,
-        level_cache=level_cache,
-    )
-
-  def _reset(self):
-    self._env.reset(seed=self._random_state.randint(0, 2 ** 31 - 1))
-
-  def _observation(self):
-    d = self._env.observations()
-    return [d[k] for k in self._observation_spec]
-
-  def initial(self):
-    self._reset()
-    return self._observation()
-
-  def step(self, action):
-    reward = self._env.step(action, num_steps=self._num_action_repeats)
-    done = np.array(not self._env.is_running())
+    _observation, reward, done, info = _env.step(action)
     if done:
-      self._reset()
-    observation = self._observation()
-    reward = np.array(reward, dtype=np.float32)
-    return reward, done, observation
+        self._reset()
+    return reward, done, _observation
 
-  def close(self):
-    self._env.close()
+  def close():
+    pass
 
   @staticmethod
   def _tensor_specs(method_name, unused_kwargs, constructor_kwargs):
@@ -138,7 +101,6 @@ class PyProcessDmLab(object):
           tf.contrib.framework.TensorSpec([], tf.bool),
           observation_spec,
       )
-
 
 StepOutputInfo = collections.namedtuple('StepOutputInfo',
                                         'episode_return episode_step')

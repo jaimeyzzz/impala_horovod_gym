@@ -1,6 +1,9 @@
-import gym, random
+import gym
+import gym.spaces
 import numpy as np
-from memoire_tf.actor.env.atari_wrappers import make_atari, wrap_deepmind
+import random
+
+from atari_wrappers import make_atari, wrap_deepmind
 
 class TransposeWrapper(gym.ObservationWrapper):
   def observation(self, observation):
@@ -38,7 +41,7 @@ def make_final(env_id, episode_life=True, clip_rewards=True, frame_stack=True, s
 if __name__ == '__main__':
   #env = make_final('BreakoutNoFrameskip-v4', True, True, False, False)
   #env = make_final('SeaquestNoFrameskip-v4', True, True, False, False)
-  env = make_final('QbertNoFrameskip-v4', True, True, False, False)
+  env = make_final('BreakoutNoFrameskip-v4', True, True, False, False)
   #env = make_final('MontezumaRevengeNoFrameskip-v4', True, True, False, False)
   print(env.action_space)
 
