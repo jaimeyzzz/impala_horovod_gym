@@ -41,7 +41,7 @@ def make_final(env_id, episode_life=True, clip_rewards=True, frame_stack=True, s
 if __name__ == '__main__':
   #env = make_final('BreakoutNoFrameskip-v4', True, True, False, False)
   #env = make_final('SeaquestNoFrameskip-v4', True, True, False, False)
-  env = make_final('BreakoutNoFrameskip-v4', True, True, False, False)
+  env = make_final('BreakoutNoFrameskip-v4', True, True, True, False)
   #env = make_final('MontezumaRevengeNoFrameskip-v4', True, True, False, False)
   print(env.action_space)
 
@@ -56,7 +56,7 @@ if __name__ == '__main__':
       action = random.randint(0,3)
       obs, rwd, term, info = env.step(action) # discrete
       if rwd != 0.0:
-        print(rwd)
+        print(rwd, type(rwd))
       if term:
         print(obs.shape)
         print(obs.dtype)

@@ -31,6 +31,8 @@ import sonnet as snt
 import tensorflow as tf
 import vtrace
 
+from utils import conv, conv_to_fc, fc
+
 try:
   import dynamic_batching
 except tf.errors.NotFoundError:
@@ -44,7 +46,7 @@ nest = tf.contrib.framework.nest
 flags = tf.app.flags
 FLAGS = tf.app.flags.FLAGS
 
-flags.DEFINE_string('logdir', 'log/agent', 'TensorFlow log directory.')
+flags.DEFINE_string('logdir', 'log/lstm_ppo2', 'TensorFlow log directory.')
 flags.DEFINE_enum('mode', 'train', ['train', 'test'], 'Training or test mode.')
 
 # Flags used for testing.
@@ -100,8 +102,8 @@ def is_single_machine():
   return FLAGS.task == -1
 
 
-class Agent(snt.RNNCore):
-  """Agent with ResNet."""
+class Agent(snt.AbstractModule):
+  """Agent with Simple CNN."""
 
   def __init__(self, num_actions):
     super(Agent, self).__init__(name='agent')
@@ -114,74 +116,30 @@ class Agent(snt.RNNCore):
   def initial_state(self, batch_size):
     return self._core.zero_state(batch_size, tf.float32)
 
-  def _instruction(self, instruction):
-    # Split string.
-    splitted = tf.string_split(instruction)
-    dense = tf.sparse_tensor_to_dense(splitted, default_value='')
-    length = tf.reduce_sum(tf.to_int32(tf.not_equal(dense, '')), axis=1)
-
-    # To int64 hash buckets. Small risk of having collisions. Alternatively, a
-    # vocabulary can be used.
-    num_hash_buckets = 1000
-    buckets = tf.string_to_hash_bucket_fast(dense, num_hash_buckets)
-
-    # Embed the instruction. Embedding size 20 seems to be enough.
-    embedding_size = 20
-    embedding = snt.Embed(num_hash_buckets, embedding_size)(buckets)
-
-    # Pad to make sure there is at least one output.
-    padding = tf.to_int32(tf.equal(tf.shape(embedding)[1], 0))
-    embedding = tf.pad(embedding, [[0, 0], [0, padding], [0, 0]])
-
-    core = tf.contrib.rnn.LSTMBlockCell(64, name='language_lstm')
-    output, _ = tf.nn.dynamic_rnn(core, embedding, length, dtype=tf.float32)
-
-    # Return last output.
-    return tf.reverse_sequence(output, length, seq_axis=1)[:, 0]
-
   def _torso(self, input_):
     last_action, env_output = input_
-    reward, _, _, (frame, instruction) = env_output
+    reward, _, _, frame = env_output
 
-    # Convert to floats.
     frame = tf.to_float(frame)
-
     frame /= 255
+    
+    print('##############', frame.shape)
+
     with tf.variable_scope('convnet'):
       conv_out = frame
-      for i, (num_ch, num_blocks) in enumerate([(16, 2), (32, 2), (32, 2)]):
-        # Downscale.
-        conv_out = snt.Conv2D(num_ch, 3, stride=1, padding='SAME')(conv_out)
-        conv_out = tf.nn.pool(
-            conv_out,
-            window_shape=[3, 3],
-            pooling_type='MAX',
-            padding='SAME',
-            strides=[2, 2])
+      for i, (num_ch, num_fi, num_st) in enumerate([(32, 8, 4), (64, 4, 2), (64, 3, 1)]):
+          conv_out = snt.Conv2D(num_ch, num_fi, num_st)(conv_out)
+          conv_out = tf.nn.relu(conv_out)
 
-        # Residual block(s).
-        for j in range(num_blocks):
-          with tf.variable_scope('residual_%d_%d' % (i, j)):
-            block_input = conv_out
-            conv_out = tf.nn.relu(conv_out)
-            conv_out = snt.Conv2D(num_ch, 3, stride=1, padding='SAME')(conv_out)
-            conv_out = tf.nn.relu(conv_out)
-            conv_out = snt.Conv2D(num_ch, 3, stride=1, padding='SAME')(conv_out)
-            conv_out += block_input
-
-    conv_out = tf.nn.relu(conv_out)
     conv_out = snt.BatchFlatten()(conv_out)
-
-    conv_out = snt.Linear(256)(conv_out)
+    conv_out = snt.Linear(512)(conv_out)
     conv_out = tf.nn.relu(conv_out)
-
-    instruction_out = self._instruction(instruction)
 
     # Append clipped last reward and one hot last action.
     clipped_reward = tf.expand_dims(tf.clip_by_value(reward, -1, 1), -1)
     one_hot_last_action = tf.one_hot(last_action, self._num_actions)
     return tf.concat(
-        [conv_out, clipped_reward, one_hot_last_action, instruction_out],
+        [conv_out, clipped_reward, one_hot_last_action],
         axis=1)
 
   def _head(self, core_output):
@@ -220,7 +178,7 @@ class Agent(snt.RNNCore):
                                       initial_core_state, core_state)
       core_output, core_state = self._core(input_, core_state)
       core_output_list.append(core_output)
-
+    
     return snt.BatchApply(self._head)(tf.stack(core_output_list)), core_state
 
 

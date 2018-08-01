@@ -73,19 +73,21 @@ DEFAULT_ACTION_SET = (
 class PyProcessGym(object):
   """gym wrapper for PyProcess."""
   def __init__(self, level, config):
-    self._env = make_final(level, True, True, True, False)
+    self._env = make_final(level, True, True, False, False)
 
   def _reset(self):
     return self._env.reset()
 
   def initial(self):
-    return [self._reset(), '']
+    return self._reset()
 
   def step(self, action):
-    observation, reward, done, info = _env.step(action)
+    observation, reward, done, info = self._env.step(action)
     if done:
         observation = self._reset()
-    return reward, done, [observation, '']
+    observation = np.expand_dims(observation, axis=3)
+    print('################################', observation.shape)
+    return np.float32(reward), done, observation
 
   def close():
     pass
@@ -96,10 +98,7 @@ class PyProcessGym(object):
     width = constructor_kwargs['config'].get('width', 320)
     height = constructor_kwargs['config'].get('height', 240)
 
-    observation_spec = [
-        tf.contrib.framework.TensorSpec([height, width, 3], tf.uint8),
-        tf.contrib.framework.TensorSpec([], tf.string),
-    ]
+    observation_spec = tf.contrib.framework.TensorSpec([height, width, 1], tf.uint8)
 
     if method_name == 'initial':
       return observation_spec
