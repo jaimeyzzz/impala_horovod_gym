@@ -46,7 +46,7 @@ nest = tf.contrib.framework.nest
 flags = tf.app.flags
 FLAGS = tf.app.flags.FLAGS
 
-flags.DEFINE_string('logdir', 'log/lstm_ppo2', 'TensorFlow log directory.')
+flags.DEFINE_string('logdir', 'log/cnn_ppo2', 'TensorFlow log directory.')
 flags.DEFINE_enum('mode', 'train', ['train', 'test'], 'Training or test mode.')
 
 # Flags used for testing.
@@ -93,10 +93,9 @@ flags.DEFINE_float('epsilon', .1, 'RMSProp epsilon.')
 
 # Structure to be sent from actors to learner.
 ActorOutput = collections.namedtuple(
-    'ActorOutput', 'level_name agent_state env_outputs agent_outputs')
+    'ActorOutput', 'level_name env_outputs agent_outputs')
 AgentOutput = collections.namedtuple('AgentOutput',
                                      'action policy_logits baseline')
-
 
 def is_single_machine():
   return FLAGS.task == -1
@@ -110,12 +109,6 @@ class Agent(snt.AbstractModule):
 
     self._num_actions = num_actions
 
-    with self._enter_variable_scope():
-      self._core = tf.contrib.rnn.LSTMBlockCell(256)
-
-  def initial_state(self, batch_size):
-    return self._core.zero_state(batch_size, tf.float32)
-
   def _torso(self, input_):
     last_action, env_output = input_
     reward, _, _, frame = env_output
@@ -127,9 +120,12 @@ class Agent(snt.AbstractModule):
 
     with tf.variable_scope('convnet'):
       conv_out = frame
-      for i, (num_ch, num_fi, num_st) in enumerate([(32, 8, 4), (64, 4, 2), (64, 3, 1)]):
-          conv_out = snt.Conv2D(num_ch, num_fi, num_st)(conv_out)
-          conv_out = tf.nn.relu(conv_out)
+      conv_out = snt.Conv2D(32, 8, stride=4)(conv_out)
+      conv_out = tf.nn.relu(conv_out)
+      conv_out = snt.Conv2D(64, 4, stride=2)(conv_out)
+      conv_out = tf.nn.relu(conv_out)
+      conv_out = snt.Conv2D(64, 3, stride=1)(conv_out)
+      conv_out = tf.nn.relu(conv_out)
 
     conv_out = snt.BatchFlatten()(conv_out)
     conv_out = snt.Linear(512)(conv_out)
@@ -147,6 +143,8 @@ class Agent(snt.AbstractModule):
         core_output)
     baseline = tf.squeeze(snt.Linear(1, name='baseline')(core_output), axis=-1)
 
+    print('***********', core_output.shape, self._num_actions)
+
     # Sample an action from the policy.
     new_action = tf.multinomial(policy_logits, num_samples=1,
                                 output_dtype=tf.int32)
@@ -154,15 +152,15 @@ class Agent(snt.AbstractModule):
 
     return AgentOutput(new_action, policy_logits, baseline)
 
-  def _build(self, input_, core_state):
+  def _build(self, input_):
     action, env_output = input_
     actions, env_outputs = nest.map_structure(lambda t: tf.expand_dims(t, 0),
                                               (action, env_output))
-    outputs, core_state = self.unroll(actions, env_outputs, core_state)
-    return nest.map_structure(lambda t: tf.squeeze(t, 0), outputs), core_state
+    outputs = self.unroll(actions, env_outputs)
+    return nest.map_structure(lambda t: tf.squeeze(t, 0), outputs)
 
   @snt.reuse_variables
-  def unroll(self, actions, env_outputs, core_state):
+  def unroll(self, actions, env_outputs):
     _, _, done, _ = env_outputs
 
     torso_outputs = snt.BatchApply(self._torso)((actions, env_outputs))
@@ -170,28 +168,17 @@ class Agent(snt.AbstractModule):
     # Note, in this implementation we can't use CuDNN RNN to speed things up due
     # to the state reset. This can be XLA-compiled (LSTMBlockCell needs to be
     # changed to implement snt.LSTMCell).
-    initial_core_state = self._core.zero_state(tf.shape(actions)[1], tf.float32)
-    core_output_list = []
-    for input_, d in zip(tf.unstack(torso_outputs), tf.unstack(done)):
-      # If the episode ended, the core state should be reset before the next.
-      core_state = nest.map_structure(functools.partial(tf.where, d),
-                                      initial_core_state, core_state)
-      core_output, core_state = self._core(input_, core_state)
-      core_output_list.append(core_output)
     
-    return snt.BatchApply(self._head)(tf.stack(core_output_list)), core_state
-
+    return snt.BatchApply(self._head)(torso_outputs)
 
 def build_actor(agent, env, level_name, action_set):
   """Builds the actor loop."""
   # Initial values.
   initial_env_output, initial_env_state = env.initial()
-  initial_agent_state = agent.initial_state(1)
   initial_action = tf.zeros([1], dtype=tf.int32)
-  dummy_agent_output, _ = agent(
+  dummy_agent_output = agent(
       (initial_action,
-       nest.map_structure(lambda t: tf.expand_dims(t, 0), initial_env_output)),
-      initial_agent_state)
+       nest.map_structure(lambda t: tf.expand_dims(t, 0), initial_env_output)))
   initial_agent_output = nest.map_structure(
       lambda t: tf.zeros(t.shape, t.dtype), dummy_agent_output)
 
@@ -204,18 +191,18 @@ def build_actor(agent, env, level_name, action_set):
       return tf.get_local_variable(t.op.name, initializer=t, use_resource=True)
 
   persistent_state = nest.map_structure(
-      create_state, (initial_env_state, initial_env_output, initial_agent_state,
+      create_state, (initial_env_state, initial_env_output,
                      initial_agent_output))
 
   def step(input_, unused_i):
     """Steps through the agent and the environment."""
-    env_state, env_output, agent_state, agent_output = input_
+    env_state, env_output, agent_output = input_
 
     # Run agent.
     action = agent_output[0]
     batched_env_output = nest.map_structure(lambda t: tf.expand_dims(t, 0),
                                             env_output)
-    agent_output, agent_state = agent((action, batched_env_output), agent_state)
+    agent_output = agent((action, batched_env_output))
 
     # Convert action index to the native action.
     action = agent_output[0][0]
@@ -223,12 +210,12 @@ def build_actor(agent, env, level_name, action_set):
 
     env_output, env_state = env.step(raw_action, env_state)
 
-    return env_state, env_output, agent_state, agent_output
+    return env_state, env_output, agent_output
 
   # Run the unroll. `read_value()` is needed to make sure later usage will
   # return the first values and not a new snapshot of the variables.
   first_values = nest.map_structure(lambda v: v.read_value(), persistent_state)
-  _, first_env_output, first_agent_state, first_agent_output = first_values
+  _, first_env_output, first_agent_output = first_values
 
   # Use scan to apply `step` multiple times, therefore unrolling the agent
   # and environment interaction for `FLAGS.unroll_length`. `tf.scan` forwards
@@ -239,7 +226,7 @@ def build_actor(agent, env, level_name, action_set):
   # unroll. Note that the initial states and outputs (fed through `initializer`)
   # are not in `output` and will need to be added manually later.
   output = tf.scan(step, tf.range(FLAGS.unroll_length), first_values)
-  _, env_outputs, _, agent_outputs = output
+  _, env_outputs, agent_outputs = output
 
   # Update persistent state with the last output from the loop.
   assign_ops = nest.map_structure(lambda v, t: v.assign(t[-1]),
@@ -249,7 +236,6 @@ def build_actor(agent, env, level_name, action_set):
   # and outputs are stored in `persistent_state` (to initialize next unroll).
   with tf.control_dependencies(nest.flatten(assign_ops)):
     # Remove the batch dimension from the agent state/output.
-    first_agent_state = nest.map_structure(lambda t: t[0], first_agent_state)
     first_agent_output = nest.map_structure(lambda t: t[0], first_agent_output)
     agent_outputs = nest.map_structure(lambda t: t[:, 0], agent_outputs)
 
@@ -259,7 +245,7 @@ def build_actor(agent, env, level_name, action_set):
         (first_agent_output, first_env_output), (agent_outputs, env_outputs))
 
     output = ActorOutput(
-        level_name=level_name, agent_state=first_agent_state,
+        level_name=level_name,
         env_outputs=full_env_outputs, agent_outputs=full_agent_outputs)
 
     # No backpropagation should be done here.
@@ -288,13 +274,12 @@ def compute_policy_gradient_loss(logits, actions, advantages):
   return tf.reduce_sum(policy_gradient_loss_per_timestep)
 
 
-def build_learner(agent, agent_state, env_outputs, agent_outputs):
+def build_learner(agent, env_outputs, agent_outputs):
   """Builds the learner loop.
 
   Args:
     agent: A snt.RNNCore module outputting `AgentOutput` named tuples, with an
       `unroll` call for computing the outputs for a whole trajectory.
-    agent_state: The initial agent state for each sequence in the batch.
     env_outputs: A `StepOutput` namedtuple where each field is of shape
       [T+1, ...].
     agent_outputs: An `AgentOutput` namedtuple where each field is of shape
@@ -304,8 +289,7 @@ def build_learner(agent, agent_state, env_outputs, agent_outputs):
     A tuple of (done, infos, and environment frames) where
     the environment frames tensor causes an update.
   """
-  learner_outputs, _ = agent.unroll(agent_outputs.action, env_outputs,
-                                    agent_state)
+  learner_outputs = agent.unroll(agent_outputs.action, env_outputs)
 
   # Use last baseline value (from the value function) to bootstrap.
   bootstrap_value = learner_outputs.baseline[-1]
@@ -522,7 +506,7 @@ def train(action_set, level_names):
         data_from_actors = nest.pack_sequence_as(structure, area.get())
 
         # Unroll agent on sequence, create losses and update ops.
-        output = build_learner(agent, data_from_actors.agent_state,
+        output = build_learner(agent,
                                data_from_actors.env_outputs,
                                data_from_actors.agent_outputs)
 

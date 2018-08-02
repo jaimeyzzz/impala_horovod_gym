@@ -73,21 +73,22 @@ DEFAULT_ACTION_SET = (
 class PyProcessGym(object):
   """gym wrapper for PyProcess."""
   def __init__(self, level, config):
-    self._env = make_final(level, True, True, False, False)
+    self._env = make_final(level, True, True, True, False)
 
   def _reset(self):
     return self._env.reset()
+  
+  def _trans(self, obs):
+    return obs.swapaxes(2, 0)
 
   def initial(self):
-    return self._reset()
+    return self._trans(self._reset())
 
   def step(self, action):
     observation, reward, done, info = self._env.step(action)
     if done:
         observation = self._reset()
-    observation = np.expand_dims(observation, axis=3)
-    print('################################', observation.shape)
-    return np.float32(reward), done, observation
+    return np.float32(reward), done, self._trans(observation)
 
   def close():
     pass
@@ -98,7 +99,7 @@ class PyProcessGym(object):
     width = constructor_kwargs['config'].get('width', 320)
     height = constructor_kwargs['config'].get('height', 240)
 
-    observation_spec = tf.contrib.framework.TensorSpec([height, width, 1], tf.uint8)
+    observation_spec = tf.contrib.framework.TensorSpec([height, width, 4], tf.uint8)
 
     if method_name == 'initial':
       return observation_spec
@@ -197,6 +198,5 @@ class FlowEnvironment(object):
           lambda a, b: tf.where(done, a, b),
           StepOutputInfo(tf.constant(0.), tf.constant(0)),
           new_info)
-
       output = StepOutput(reward, new_info, done, observation)
       return output, new_state
