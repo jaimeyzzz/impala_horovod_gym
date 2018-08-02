@@ -32,8 +32,6 @@ import sonnet as snt
 import tensorflow as tf
 import vtrace
 
-from utils import conv, conv_to_fc, fc
-
 try:
   import dynamic_batching
 except tf.errors.NotFoundError:
@@ -47,7 +45,7 @@ nest = tf.contrib.framework.nest
 flags = tf.app.flags
 FLAGS = tf.app.flags.FLAGS
 
-flags.DEFINE_string('logdir', 'log/cnn_ppo2', 'TensorFlow log directory.')
+flags.DEFINE_string('logdir', '/tmp/agent/', 'TensorFlow log directory.')
 flags.DEFINE_enum('mode', 'train', ['train', 'test'], 'Training or test mode.')
 
 # Flags used for testing.
@@ -117,8 +115,6 @@ class Agent(snt.AbstractModule):
     frame = tf.to_float(frame)
     frame /= 255
     
-    print('##############', frame.shape)
-
     with tf.variable_scope('convnet'):
       conv_out = frame
       conv_out = snt.Conv2D(32, 8, stride=4)(conv_out)
@@ -143,8 +139,6 @@ class Agent(snt.AbstractModule):
     policy_logits = snt.Linear(self._num_actions, name='policy_logits')(
         core_output)
     baseline = tf.squeeze(snt.Linear(1, name='baseline')(core_output), axis=-1)
-
-    print('***********', core_output.shape, self._num_actions)
 
     # Sample an action from the policy.
     new_action = tf.multinomial(policy_logits, num_samples=1,
