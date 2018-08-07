@@ -408,15 +408,13 @@ def train(action_set, level_names):
     # Placing the variable on CPU, makes it cheaper to send it to all the
     # actors. Continual copying the variables from the GPU is slow.
     global_variable_device = shared_job_device + '/cpu'
-    with open('/data1/jiaminglu/c.oa.com/cluster_spec.json', 'r') as fp:
-      cluster_spec_dict = json.load(fp)
-    cluster = tf.train.ClusterSpec(cluster_spec_dict)
-    """
+    #with open('/data1/jiaminglu/c.oa.com/cluster_spec.json', 'r') as fp:
+    #  cluster_spec_dict = json.load(fp)
+    #cluster = tf.train.ClusterSpec(cluster_spec_dict)
     cluster = tf.train.ClusterSpec({
         'actor': ['localhost:%d' % (8001 + i) for i in range(FLAGS.num_actors)],
         'learner': ['localhost:8000']
     })
-    """
     server = tf.train.Server(cluster, job_name=FLAGS.job_name,
                              task_index=FLAGS.task)
     filters = [shared_job_device, local_job_device]
