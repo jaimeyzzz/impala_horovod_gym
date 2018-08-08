@@ -90,8 +90,8 @@ class PyProcessGym(object):
         observation = self._reset()
     return np.float32(reward), done, self._trans(observation)
 
-  def close():
-    pass
+  def close(self):
+    self._env.close()
 
   @staticmethod
   def _tensor_specs(method_name, unused_kwargs, constructor_kwargs):

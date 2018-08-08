@@ -53,12 +53,13 @@ flags.DEFINE_integer('test_num_episodes', 10, 'Number of episodes per level.')
 
 # Flags used for distributed training.
 flags.DEFINE_integer('task', -1, 'Task id. Use -1 for local training.')
-flags.DEFINE_enum('job_name', 'learner', ['learner', 'actor'],
-                  'Job name. Ignored when task is set to -1.')
+flags.DEFINE_enum('job_name', 'learner', ['ps', 'learner', 'actor'],
+                  'Job name.')
 
 # Training.
 flags.DEFINE_integer('total_environment_frames', int(1e9),
                      'Total environment frames to train for.')
+flags.DEFINE_integer('num_learners', 2, 'Number of learners.')
 flags.DEFINE_integer('num_actors', 4, 'Number of actors.')
 flags.DEFINE_integer('batch_size', 2, 'Batch size for training.')
 flags.DEFINE_integer('unroll_length', 100, 'Unroll length in agent steps.')
@@ -95,9 +96,6 @@ ActorOutput = collections.namedtuple(
     'ActorOutput', 'level_name env_outputs agent_outputs')
 AgentOutput = collections.namedtuple('AgentOutput',
                                      'action policy_logits baseline')
-
-def is_single_machine():
-  return FLAGS.task == -1
 
 
 class Agent(snt.AbstractModule):
@@ -165,6 +163,7 @@ class Agent(snt.AbstractModule):
     # changed to implement snt.LSTMCell).
     
     return snt.BatchApply(self._head)(torso_outputs)
+
 
 def build_actor(agent, env, level_name, action_set):
   """Builds the actor loop."""
@@ -269,20 +268,22 @@ def compute_policy_gradient_loss(logits, actions, advantages):
   return tf.reduce_sum(policy_gradient_loss_per_timestep)
 
 
-def build_learner(agent, env_outputs, agent_outputs):
+def build_learner(agent, g_step, env_outputs, agent_outputs):
   """Builds the learner loop.
 
   Args:
     agent: A snt.RNNCore module outputting `AgentOutput` named tuples, with an
       `unroll` call for computing the outputs for a whole trajectory.
+    g_step: global step for distributed tf
     env_outputs: A `StepOutput` namedtuple where each field is of shape
       [T+1, ...].
     agent_outputs: An `AgentOutput` namedtuple where each field is of shape
       [T+1, ...].
 
   Returns:
-    A tuple of (done, infos, and environment frames) where
+    Output: A tuple of (done, infos, and environment frames) where
     the environment frames tensor causes an update.
+    Optimizer: the optimizer
   """
   learner_outputs = agent.unroll(agent_outputs.action, env_outputs)
 
@@ -336,7 +337,12 @@ def build_learner(agent, env_outputs, agent_outputs):
                                             FLAGS.total_environment_frames, 0)
   optimizer = tf.train.RMSPropOptimizer(learning_rate, FLAGS.decay,
                                         FLAGS.momentum, FLAGS.epsilon)
-  train_op = optimizer.minimize(total_loss)
+  optimizer = tf.train.SyncReplicasOptimizer(
+    optimizer,
+    replicas_to_aggregate=FLAGS.num_learners,
+    total_num_replicas=FLAGS.num_learners
+  )
+  train_op = optimizer.minimize(total_loss, global_step=g_step)
 
   # Merge updating the network and environment frames into a single tensor.
   with tf.control_dependencies([train_op]):
@@ -348,7 +354,7 @@ def build_learner(agent, env_outputs, agent_outputs):
   tf.summary.scalar('total_loss', total_loss)
   tf.summary.histogram('action', agent_outputs.action)
 
-  return done, infos, num_env_frames_and_train
+  return (done, infos, num_env_frames_and_train), optimizer
 
 
 def create_environment(level_name, seed, is_test=False):
@@ -391,33 +397,32 @@ def pin_global_variables(device):
 def train(action_set, level_names):
   """Train."""
 
-  if is_single_machine():
-    local_job_device = ''
-    shared_job_device = ''
-    is_actor_fn = lambda i: True
-    is_learner = True
-    global_variable_device = '/gpu'
-    server = tf.train.Server.create_local_server()
-    filters = []
-  else:
-    local_job_device = '/job:%s/task:%d' % (FLAGS.job_name, FLAGS.task)
-    shared_job_device = '/job:learner/task:0'
-    is_actor_fn = lambda i: FLAGS.job_name == 'actor' and i == FLAGS.task
-    is_learner = FLAGS.job_name == 'learner'
+  ps_job_device = '/job:ps/task:0'
+  local_job_device = '/job:%s/task:%d' % (FLAGS.job_name, FLAGS.task)
+  # for learner task i, the shared job is itself
+  # for actor task i, the shared job is the learner in round robin order
+  shared_job_device = '/job:learner/task:{}'.format(
+    FLAGS.task if FLAGS.job_name == 'learner' else
+    FLAGS.task % FLAGS.num_learners
+  )
+  is_actor_fn = lambda i: FLAGS.job_name == 'actor' and i == FLAGS.task
+  is_learner_fn = lambda i: FLAGS.job_name == 'learner' and i == FLAGS.task
+  # Placing the variable on CPU, makes it cheaper to send it to all the
+  # actors. Continual copying the variables from the GPU is slow.
+  global_variable_device = shared_job_device + '/cpu'
+  cluster = tf.train.ClusterSpec({
+    'ps': ['localhost:8000'],
+    'actor': ['localhost:%d' % (8001 + i) for i in range(FLAGS.num_actors)],
+    'learner': ['localhost:%d' % (9001 + i) for i in range(FLAGS.num_learners)]
+  })
+  server = tf.train.Server(cluster, job_name=FLAGS.job_name,
+                           task_index=FLAGS.task)
+  filters = [ps_job_device, shared_job_device, local_job_device]
 
-    # Placing the variable on CPU, makes it cheaper to send it to all the
-    # actors. Continual copying the variables from the GPU is slow.
-    global_variable_device = shared_job_device + '/cpu'
-    #with open('/data1/jiaminglu/c.oa.com/cluster_spec.json', 'r') as fp:
-    #  cluster_spec_dict = json.load(fp)
-    #cluster = tf.train.ClusterSpec(cluster_spec_dict)
-    cluster = tf.train.ClusterSpec({
-        'actor': ['localhost:%d' % (8001 + i) for i in range(FLAGS.num_actors)],
-        'learner': ['localhost:8000']
-    })
-    server = tf.train.Server(cluster, job_name=FLAGS.job_name,
-                             task_index=FLAGS.task)
-    filters = [shared_job_device, local_job_device]
+  # just wait if parameter server
+  if FLAGS.job_name == 'ps':
+    server.join()
+    return
 
   # Only used to find the actor output structure.
   with tf.Graph().as_default():
@@ -428,29 +433,18 @@ def train(action_set, level_names):
     dtypes = [t.dtype for t in flattened_structure]
     shapes = [t.shape.as_list() for t in flattened_structure]
 
+  # build graph for actor or learner
+  dev_fn = tf.train.replica_device_setter(
+    ps_tasks=1, ps_device='/job:ps', worker_device=local_job_device + '/cpu'
+  )
   with tf.Graph().as_default(), \
-       tf.device(local_job_device + '/cpu'), \
-       pin_global_variables(global_variable_device):
+       tf.device(dev_fn):
     tf.set_random_seed(FLAGS.seed)  # Makes initialization deterministic.
 
     # Create Queue and Agent on the learner.
     with tf.device(shared_job_device):
       queue = tf.FIFOQueue(1, dtypes, shapes, shared_name='buffer')
       agent = Agent(len(action_set))
-
-      if is_single_machine() and 'dynamic_batching' in sys.modules:
-        # For single machine training, we use dynamic batching for improved GPU
-        # utilization. The semantics of single machine training are slightly
-        # different from the distributed setting because within a single unroll
-        # of an environment, the actions may be computed using different weights
-        # if an update happens within the unroll.
-        old_build = agent._build
-        @dynamic_batching.batch_fn
-        def build(*args):
-          with tf.device('/gpu'):
-            return old_build(*args)
-        tf.logging.info('Using dynamic batching.')
-        agent._build = build
 
     # Build actors and ops to enqueue their output.
     enqueue_ops = []
@@ -463,68 +457,71 @@ def train(action_set, level_names):
         with tf.device(shared_job_device):
           enqueue_ops.append(queue.enqueue(nest.flatten(actor_output)))
 
-    # If running in a single machine setup, run actors with QueueRunners
-    # (separate threads).
-    if is_learner and enqueue_ops:
-      tf.train.add_queue_runner(tf.train.QueueRunner(queue, enqueue_ops))
-
     # Build learner.
-    if is_learner:
-      # Create global step, which is the number of environment frames processed.
-      tf.get_variable(
-          'num_environment_frames',
-          initializer=tf.zeros_initializer(),
-          shape=[],
-          dtype=tf.int64,
-          trainable=False,
-          collections=[tf.GraphKeys.GLOBAL_STEP, tf.GraphKeys.GLOBAL_VARIABLES])
+    for i in range(FLAGS.num_learners):
+      if is_learner_fn(i):
+        # Create global step, which is the number of environment frames
+        # processed.
+        g_step = tf.get_variable(
+          'num_environment_frames', initializer=tf.zeros_initializer(),
+          shape=[], dtype=tf.int64, trainable=False,
+          collections=[tf.GraphKeys.GLOBAL_STEP, tf.GraphKeys.GLOBAL_VARIABLES]
+        )
 
-      # Create batch (time major) and recreate structure.
-      dequeued = queue.dequeue_many(FLAGS.batch_size)
-      dequeued = nest.pack_sequence_as(structure, dequeued)
+        # Create batch (time major) and recreate structure.
+        dequeued = queue.dequeue_many(FLAGS.batch_size)
+        dequeued = nest.pack_sequence_as(structure, dequeued)
 
-      def make_time_major(s):
-        return nest.map_structure(
-            lambda t: tf.transpose(t, [1, 0] + list(range(t.shape.ndims))[2:]), s)
+        def make_time_major(s):
+          return nest.map_structure(
+            lambda t: tf.transpose(t, [1, 0] + list(range(t.shape.ndims))[2:]),
+            s
+          )
 
-      dequeued = dequeued._replace(
-          env_outputs=make_time_major(dequeued.env_outputs),
-          agent_outputs=make_time_major(dequeued.agent_outputs))
+        dequeued = dequeued._replace(
+            env_outputs=make_time_major(dequeued.env_outputs),
+            agent_outputs=make_time_major(dequeued.agent_outputs))
 
-      with tf.device('/gpu'):
-        # Using StagingArea allows us to prepare the next batch and send it to
-        # the GPU while we're performing a training step. This adds up to 1 step
-        # policy lag.
-        flattened_output = nest.flatten(dequeued)
-        area = tf.contrib.staging.StagingArea(
-            [t.dtype for t in flattened_output],
-            [t.shape for t in flattened_output])
-        stage_op = area.put(flattened_output)
+        with tf.device('/gpu'):  # TODO(pengsun): gpu device index?
+          # Using StagingArea allows us to prepare the next batch and send it to
+          # the GPU while we're performing a training step. This adds up to 1
+          # step policy lag.
+          flattened_output = nest.flatten(dequeued)
+          area = tf.contrib.staging.StagingArea(
+              [t.dtype for t in flattened_output],
+              [t.shape for t in flattened_output])
+          stage_op = area.put(flattened_output)
 
-        data_from_actors = nest.pack_sequence_as(structure, area.get())
+          data_from_actors = nest.pack_sequence_as(structure, area.get())
 
-        # Unroll agent on sequence, create losses and update ops.
-        output = build_learner(agent,
-                               data_from_actors.env_outputs,
-                               data_from_actors.agent_outputs)
+          # Unroll agent on sequence, create losses and update ops.
+          output, optimizer = build_learner(agent,
+                                            g_step,
+                                            data_from_actors.env_outputs,
+                                            data_from_actors.agent_outputs)
 
     # Create MonitoredSession (to run the graph, checkpoint and log).
-    tf.logging.info('Creating MonitoredSession, is_chief %s', is_learner)
+    is_learner = FLAGS.job_name == 'learner'
+    is_chief = is_learner_fn(0)  # learner 0 is the chief
+    hooks = [py_process.PyProcessHook()]
+    if is_learner_fn(FLAGS.task):  # required!
+      hooks.append(optimizer.make_session_run_hook(is_chief))
+    tf.logging.info('Creating MonitoredSession, is_chief %s', is_chief)
     config = tf.ConfigProto(allow_soft_placement=True, device_filters=filters)
     with tf.train.MonitoredTrainingSession(
         server.target,
-        is_chief=is_learner,
+        is_chief=is_chief,
         checkpoint_dir=FLAGS.logdir,
         save_checkpoint_secs=600,
         save_summaries_secs=30,
         log_step_count_steps=50000,
         config=config,
-        hooks=[py_process.PyProcessHook()]) as session:
+        hooks=hooks) as session:
 
       if is_learner:
-        # Logging.
-        level_returns = {level_name: [] for level_name in level_names}
-        summary_writer = tf.summary.FileWriterCache.get(FLAGS.logdir)
+        # tb Logging
+        summary_writer = (tf.summary.FileWriterCache.get(FLAGS.logdir) if
+                          is_chief else None)
 
         # Prepare data for first run.
         session.run_step_fn(
@@ -543,16 +540,16 @@ def train(action_set, level_names):
               infos_v.episode_step[done_v]):
             episode_frames = episode_step * FLAGS.num_action_repeats
 
-            tf.logging.info('Level: %s Episode return: %f',
-                            level_name, episode_return)
+            tf.logging.info('learner: %d Env: %s Episode return: %f',
+                            FLAGS.task, level_name, episode_return)
 
-            summary = tf.summary.Summary()
-            summary.value.add(tag=level_name + '/episode_return',
-                              simple_value=episode_return)
-            summary.value.add(tag=level_name + '/episode_frames',
-                              simple_value=episode_frames)
-            summary_writer.add_summary(summary, num_env_frames_v)
-
+            if is_chief:  # tb Logging
+              summary = tf.summary.Summary()
+              summary.value.add(tag=level_name + '/episode_return',
+                                simple_value=episode_return)
+              summary.value.add(tag=level_name + '/episode_frames',
+                                simple_value=episode_frames)
+              summary_writer.add_summary(summary, num_env_frames_v)
       else:
         # Execute actors (they just need to enqueue their output).
         while True:
@@ -586,6 +583,7 @@ def test(action_set, level_names):
           if len(returns) >= FLAGS.test_num_episodes:
             tf.logging.info('Mean episode return: %f', np.mean(returns))
             break
+
 
 def main(_):
   tf.logging.set_verbosity(tf.logging.INFO)
