@@ -25,19 +25,14 @@ import json
 import os
 import sys
 
-import environments
 import numpy as np
-import py_process
 import sonnet as snt
 import tensorflow as tf
-import vtrace
-
-try:
-  import dynamic_batching
-except tf.errors.NotFoundError:
-  tf.logging.warning('Running without dynamic batching.')
-
 from six.moves import range
+
+import environments
+import py_process
+import vtrace
 
 
 nest = tf.contrib.framework.nest
@@ -74,13 +69,8 @@ flags.DEFINE_enum('reward_clipping', 'abs_one', ['abs_one', 'soft_asymmetric'],
                   'Reward clipping.')
 
 # Environment settings.
-flags.DEFINE_string(
-    'dataset_path', '',
-    'Path to dataset needed for psychlab_*, see '
-    'https://github.com/deepmind/lab/tree/master/data/brady_konkle_oliva2008')
 flags.DEFINE_string('level_name', 'BreakoutNoFrameskip-v4',
-                    '''Level name or \'dmlab30\' for the full DmLab-30 suite '''
-                    '''with levels assigned round robin to the actors.''')
+                    '''Level name or gym env name''')
 flags.DEFINE_integer('width', 84, 'Width of observation.')
 flags.DEFINE_integer('height', 84, 'Height of observation.')
 
@@ -364,8 +354,7 @@ def create_environment(level_name, seed, is_test=False):
   # Lab.
   config = {
       'width': FLAGS.width,
-      'height': FLAGS.height,
-      'datasetPath': FLAGS.dataset_path,
+      'height': FLAGS.height
   }
   if is_test:
     config['allowHoldOutLevels'] = 'true'
