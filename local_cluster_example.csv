@@ -1,0 +1,7 @@
+job,ip,tf_port,cuda_visible_devices,ssh_port,ssh_username,ssh_password
+ps,localhost,8000,,,,
+learner,localhost,8001,,,,
+learner,localhost,8002,,,,
+actor,localhost,9001,,,,
+actor,localhost,9002,,,,
+actor,localhost,9003,,,,

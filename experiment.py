@@ -20,10 +20,6 @@ from __future__ import print_function
 
 import collections
 import contextlib
-import functools
-import json
-import os
-import sys
 
 import numpy as np
 import sonnet as snt
@@ -47,15 +43,19 @@ flags.DEFINE_enum('mode', 'train', ['train', 'test'], 'Training or test mode.')
 flags.DEFINE_integer('test_num_episodes', 10, 'Number of episodes per level.')
 
 # Flags used for distributed training.
+flags.DEFINE_string('ps_hosts', 'localhost:8000', 'ps hosts.')
+flags.DEFINE_string('learner_hosts', 'localhost:8001,localhosts:8002',
+                    'learner hosts.')
+flags.DEFINE_string('actor_hosts', 'localhost:9001,localhosts:9002',
+                    'actor hosts.')
 flags.DEFINE_integer('task', -1, 'Task id. Use -1 for local training.')
 flags.DEFINE_enum('job_name', 'learner', ['ps', 'learner', 'actor'],
                   'Job name.')
 
+
 # Training.
 flags.DEFINE_integer('total_environment_frames', int(1e9),
                      'Total environment frames to train for.')
-flags.DEFINE_integer('num_learners', 2, 'Number of learners.')
-flags.DEFINE_integer('num_actors', 4, 'Number of actors.')
 flags.DEFINE_integer('batch_size', 2, 'Batch size for training.')
 flags.DEFINE_integer('unroll_length', 100, 'Unroll length in agent steps.')
 flags.DEFINE_integer('num_action_repeats', 4, 'Number of action repeats.')
@@ -327,10 +327,11 @@ def build_learner(agent, g_step, env_outputs, agent_outputs):
                                             FLAGS.total_environment_frames, 0)
   optimizer = tf.train.RMSPropOptimizer(learning_rate, FLAGS.decay,
                                         FLAGS.momentum, FLAGS.epsilon)
+  num_learners = len(FLAGS.learner_hosts.split(','))
   optimizer = tf.train.SyncReplicasOptimizer(
     optimizer,
-    replicas_to_aggregate=FLAGS.num_learners,
-    total_num_replicas=FLAGS.num_learners
+    replicas_to_aggregate=num_learners,
+    total_num_replicas=num_learners
   )
   train_op = optimizer.minimize(total_loss, global_step=g_step)
 
@@ -390,9 +391,14 @@ def train(action_set, level_names):
   local_job_device = '/job:%s/task:%d' % (FLAGS.job_name, FLAGS.task)
   # for learner task i, the shared job is itself
   # for actor task i, the shared job is the learner in round robin order
+  ps_hosts = FLAGS.ps_hosts.split(',')
+  actor_hosts = FLAGS.actor_hosts.split(',')
+  learner_hosts = FLAGS.learner_hosts.split(',')
+  num_learners = len(learner_hosts)
+  num_actors = len(actor_hosts)
   shared_job_device = '/job:learner/task:{}'.format(
     FLAGS.task if FLAGS.job_name == 'learner' else
-    FLAGS.task % FLAGS.num_learners
+    FLAGS.task % num_learners
   )
   is_actor_fn = lambda i: FLAGS.job_name == 'actor' and i == FLAGS.task
   is_learner_fn = lambda i: FLAGS.job_name == 'learner' and i == FLAGS.task
@@ -400,13 +406,15 @@ def train(action_set, level_names):
   # actors. Continual copying the variables from the GPU is slow.
   global_variable_device = shared_job_device + '/cpu'
   cluster = tf.train.ClusterSpec({
-    'ps': ['localhost:8000'],
-    'actor': ['localhost:%d' % (8001 + i) for i in range(FLAGS.num_actors)],
-    'learner': ['localhost:%d' % (9001 + i) for i in range(FLAGS.num_learners)]
+    'ps': FLAGS.ps_hosts.split(','),
+    'actor': FLAGS.actor_hosts.split(','),
+    'learner': FLAGS.learner_hosts.split(',')
   })
   server = tf.train.Server(cluster, job_name=FLAGS.job_name,
                            task_index=FLAGS.task)
   filters = [ps_job_device, shared_job_device, local_job_device]
+
+
 
   # just wait if parameter server
   if FLAGS.job_name == 'ps':
@@ -437,7 +445,7 @@ def train(action_set, level_names):
 
     # Build actors and ops to enqueue their output.
     enqueue_ops = []
-    for i in range(FLAGS.num_actors):
+    for i in range(num_actors):
       if is_actor_fn(i):
         level_name = level_names[i % len(level_names)]
         tf.logging.info('Creating actor %d with level %s', i, level_name)
@@ -447,7 +455,7 @@ def train(action_set, level_names):
           enqueue_ops.append(queue.enqueue(nest.flatten(actor_output)))
 
     # Build learner.
-    for i in range(FLAGS.num_learners):
+    for i in range(num_learners):
       if is_learner_fn(i):
         # Create global step, which is the number of environment frames
         # processed.
