@@ -22,11 +22,11 @@ import collections
 import contextlib
 
 import numpy as np
-import sonnet as snt
 import tensorflow as tf
 from six.moves import range
 
 import environments
+from agent import agent_factory
 import py_process
 import vtrace
 
@@ -58,8 +58,9 @@ flags.DEFINE_integer('total_environment_frames', int(1e9),
                      'Total environment frames to train for.')
 flags.DEFINE_integer('batch_size', 2, 'Batch size for training.')
 flags.DEFINE_integer('unroll_length', 100, 'Unroll length in agent steps.')
-flags.DEFINE_integer('num_action_repeats', 4, 'Number of action repeats.')
+flags.DEFINE_integer('num_action_repeats', 1, 'Number of action repeats.')
 flags.DEFINE_integer('seed', 1, 'Random seed.')
+flags.DEFINE_string('agent_name', 'SimpleConvNetAgent', 'agent name.')
 
 # Loss settings.
 flags.DEFINE_float('entropy_cost', 0.00025, 'Entropy cost/multiplier.')
@@ -83,86 +84,21 @@ flags.DEFINE_float('epsilon', .1, 'RMSProp epsilon.')
 
 # Structure to be sent from actors to learner.
 ActorOutput = collections.namedtuple(
-    'ActorOutput', 'level_name env_outputs agent_outputs')
-AgentOutput = collections.namedtuple('AgentOutput',
-                                     'action policy_logits baseline')
-
-
-class Agent(snt.AbstractModule):
-  """Agent with Simple CNN."""
-
-  def __init__(self, num_actions):
-    super(Agent, self).__init__(name='agent')
-
-    self._num_actions = num_actions
-
-  def _torso(self, input_):
-    last_action, env_output = input_
-    reward, _, _, frame = env_output
-
-    frame = tf.to_float(frame)
-    frame /= 255
-    
-    with tf.variable_scope('convnet'):
-      conv_out = frame
-      conv_out = snt.Conv2D(32, 8, stride=4)(conv_out)
-      conv_out = tf.nn.relu(conv_out)
-      conv_out = snt.Conv2D(64, 4, stride=2)(conv_out)
-      conv_out = tf.nn.relu(conv_out)
-      conv_out = snt.Conv2D(64, 3, stride=1)(conv_out)
-      conv_out = tf.nn.relu(conv_out)
-
-    conv_out = snt.BatchFlatten()(conv_out)
-    conv_out = snt.Linear(512)(conv_out)
-    conv_out = tf.nn.relu(conv_out)
-
-    # Append clipped last reward and one hot last action.
-    clipped_reward = tf.expand_dims(tf.clip_by_value(reward, -1, 1), -1)
-    one_hot_last_action = tf.one_hot(last_action, self._num_actions)
-    return tf.concat(
-        [conv_out, clipped_reward, one_hot_last_action],
-        axis=1)
-
-  def _head(self, core_output):
-    policy_logits = snt.Linear(self._num_actions, name='policy_logits')(
-        core_output)
-    baseline = tf.squeeze(snt.Linear(1, name='baseline')(core_output), axis=-1)
-
-    # Sample an action from the policy.
-    new_action = tf.multinomial(policy_logits, num_samples=1,
-                                output_dtype=tf.int32)
-    new_action = tf.squeeze(new_action, 1, name='new_action')
-
-    return AgentOutput(new_action, policy_logits, baseline)
-
-  def _build(self, input_):
-    action, env_output = input_
-    actions, env_outputs = nest.map_structure(lambda t: tf.expand_dims(t, 0),
-                                              (action, env_output))
-    outputs = self.unroll(actions, env_outputs)
-    return nest.map_structure(lambda t: tf.squeeze(t, 0), outputs)
-
-  @snt.reuse_variables
-  def unroll(self, actions, env_outputs):
-    _, _, done, _ = env_outputs
-
-    torso_outputs = snt.BatchApply(self._torso)((actions, env_outputs))
-
-    # Note, in this implementation we can't use CuDNN RNN to speed things up due
-    # to the state reset. This can be XLA-compiled (LSTMBlockCell needs to be
-    # changed to implement snt.LSTMCell).
-    
-    return snt.BatchApply(self._head)(torso_outputs)
+    'ActorOutput', 'level_name agent_state env_outputs agent_outputs')
+ActorOutputNoState = collections.namedtuple(
+    'ActorOutputNoState', 'level_name env_outputs agent_outputs')
 
 
 def build_actor(agent, env, level_name, action_set):
   """Builds the actor loop."""
   # Initial values.
   initial_env_output, initial_env_state = env.initial()
+  initial_agent_state = agent.initial_state(1)
   initial_action = tf.zeros([1], dtype=tf.int32)
-  dummy_agent_output = agent(
+  dummy_agent_output, _ = agent(
       (initial_action,
-       nest.map_structure(lambda t: tf.expand_dims(t, 0), initial_env_output)))
+       nest.map_structure(lambda t: tf.expand_dims(t, 0), initial_env_output)),
+      initial_agent_state)
   initial_agent_output = nest.map_structure(
       lambda t: tf.zeros(t.shape, t.dtype), dummy_agent_output)
 
@@ -175,18 +111,18 @@ def build_actor(agent, env, level_name, action_set):
       return tf.get_local_variable(t.op.name, initializer=t, use_resource=True)
 
   persistent_state = nest.map_structure(
-      create_state, (initial_env_state, initial_env_output,
+      create_state, (initial_env_state, initial_env_output, initial_agent_state,
                      initial_agent_output))
 
   def step(input_, unused_i):
     """Steps through the agent and the environment."""
-    env_state, env_output, agent_output = input_
+    env_state, env_output, agent_state, agent_output = input_
 
     # Run agent.
     action = agent_output[0]
     batched_env_output = nest.map_structure(lambda t: tf.expand_dims(t, 0),
                                             env_output)
-    agent_output = agent((action, batched_env_output))
+    agent_output, agent_state = agent((action, batched_env_output), agent_state)
 
     # Convert action index to the native action.
     action = agent_output[0][0]
@@ -194,12 +130,12 @@ def build_actor(agent, env, level_name, action_set):
 
     env_output, env_state = env.step(raw_action, env_state)
 
-    return env_state, env_output, agent_output
+    return env_state, env_output, agent_state, agent_output
 
   # Run the unroll. `read_value()` is needed to make sure later usage will
   # return the first values and not a new snapshot of the variables.
   first_values = nest.map_structure(lambda v: v.read_value(), persistent_state)
-  _, first_env_output, first_agent_output = first_values
+  _, first_env_output, first_agent_state, first_agent_output = first_values
 
   # Use scan to apply `step` multiple times, therefore unrolling the agent
   # and environment interaction for `FLAGS.unroll_length`. `tf.scan` forwards
@@ -210,7 +146,7 @@ def build_actor(agent, env, level_name, action_set):
   # unroll. Note that the initial states and outputs (fed through `initializer`)
   # are not in `output` and will need to be added manually later.
   output = tf.scan(step, tf.range(FLAGS.unroll_length), first_values)
-  _, env_outputs, agent_outputs = output
+  _, env_outputs, _, agent_outputs = output
 
   # Update persistent state with the last output from the loop.
   assign_ops = nest.map_structure(lambda v, t: v.assign(t[-1]),
@@ -220,6 +156,7 @@ def build_actor(agent, env, level_name, action_set):
   # and outputs are stored in `persistent_state` (to initialize next unroll).
   with tf.control_dependencies(nest.flatten(assign_ops)):
     # Remove the batch dimension from the agent state/output.
+    first_agent_state = nest.map_structure(lambda t: t[0], first_agent_state)
     first_agent_output = nest.map_structure(lambda t: t[0], first_agent_output)
     agent_outputs = nest.map_structure(lambda t: t[:, 0], agent_outputs)
 
@@ -228,9 +165,14 @@ def build_actor(agent, env, level_name, action_set):
         lambda first, rest: tf.concat([[first], rest], 0),
         (first_agent_output, first_env_output), (agent_outputs, env_outputs))
 
-    output = ActorOutput(
-        level_name=level_name,
-        env_outputs=full_env_outputs, agent_outputs=full_agent_outputs)
+    if hasattr(initial_agent_state, 'c') and hasattr(initial_agent_state, 'h'):
+      output = ActorOutput(level_name=level_name, agent_state=first_agent_state,
+                           env_outputs=full_env_outputs,
+                           agent_outputs=full_agent_outputs)
+    else:
+      output = ActorOutputNoState(level_name=level_name,
+                                  env_outputs=full_env_outputs,
+                                  agent_outputs=full_agent_outputs)
 
     # No backpropagation should be done here.
     return nest.map_structure(tf.stop_gradient, output)
@@ -258,24 +200,26 @@ def compute_policy_gradient_loss(logits, actions, advantages):
   return tf.reduce_sum(policy_gradient_loss_per_timestep)
 
 
-def build_learner(agent, g_step, env_outputs, agent_outputs):
+def build_learner(agent, agent_state, env_outputs, agent_outputs, g_step):
   """Builds the learner loop.
 
   Args:
     agent: A snt.RNNCore module outputting `AgentOutput` named tuples, with an
       `unroll` call for computing the outputs for a whole trajectory.
-    g_step: global step for distributed tf
+    agent_state: The initial agent state for each sequence in the batch.
     env_outputs: A `StepOutput` namedtuple where each field is of shape
       [T+1, ...].
     agent_outputs: An `AgentOutput` namedtuple where each field is of shape
       [T+1, ...].
+    g_step: global step for distributed tf
 
   Returns:
     Output: A tuple of (done, infos, and environment frames) where
     the environment frames tensor causes an update.
     Optimizer: the optimizer
   """
-  learner_outputs = agent.unroll(agent_outputs.action, env_outputs)
+  learner_outputs, _ = agent.unroll(agent_outputs.action, env_outputs,
+                                    agent_state)
 
   # Use last baseline value (from the value function) to bootstrap.
   bootstrap_value = learner_outputs.baseline[-1]
@@ -350,6 +294,7 @@ def build_learner(agent, g_step, env_outputs, agent_outputs):
 
 def create_environment(level_name, seed, is_test=False):
   """Creates an environment wrapped in a `FlowEnvironment`."""
+
   # Note, you may want to use a level cache to speed of compilation of
   # environment maps. See the documentation for the Python interface of DeepMind
   # Lab.
@@ -415,13 +360,13 @@ def train(action_set, level_names):
   filters = [ps_job_device, shared_job_device, local_job_device]
 
 
-
   # just wait if parameter server
   if FLAGS.job_name == 'ps':
     server.join()
     return
 
   # Only used to find the actor output structure.
+  Agent = agent_factory(FLAGS.agent_name)
   with tf.Graph().as_default():
     agent = Agent(len(action_set))
     env = create_environment(level_names[0], seed=1)
@@ -492,10 +437,17 @@ def train(action_set, level_names):
           data_from_actors = nest.pack_sequence_as(structure, area.get())
 
           # Unroll agent on sequence, create losses and update ops.
-          output, optimizer = build_learner(agent,
-                                            g_step,
-                                            data_from_actors.env_outputs,
-                                            data_from_actors.agent_outputs)
+
+          if hasattr(data_from_actors, 'agent_state'):
+            agent_state = data_from_actors.agent_state
+          else:
+            agent_state = agent.initial_state(1)
+          output, optimizer = build_learner(
+            agent,
+            agent_state=agent_state,
+            env_outputs=data_from_actors.env_outputs,
+            agent_outputs=data_from_actors.agent_outputs,
+            g_step=g_step)
 
     # Create MonitoredSession (to run the graph, checkpoint and log).
     is_learner = FLAGS.job_name == 'learner'
@@ -556,6 +508,7 @@ def train(action_set, level_names):
 def test(action_set, level_names):
   """Test."""
 
+  Agent = agent_factory(FLAGS.agent_name)
   level_returns = {level_name: [] for level_name in level_names}
   with tf.Graph().as_default():
     agent = Agent(len(action_set))

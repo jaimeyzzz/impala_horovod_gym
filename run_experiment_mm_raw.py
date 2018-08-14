@@ -52,6 +52,7 @@ flags.DEFINE_integer('batch_size', 2, 'Batch size for training.')
 flags.DEFINE_integer('unroll_length', 100, 'Unroll length in agent steps.')
 flags.DEFINE_integer('num_action_repeats', 4, 'Number of action repeats.')
 flags.DEFINE_integer('seed', 1, 'Random seed.')
+flags.DEFINE_string('agent_name', 'SimpleConvNetAgent', 'agent name.')
 
 # Loss settings.
 flags.DEFINE_float('entropy_cost', 0.00025, 'Entropy cost/multiplier.')
@@ -117,6 +118,7 @@ def cmd_learner(cluster_desc, worker_desc, task):
     "--unroll_length={}".format(FLAGS.unroll_length),
     "--num_action_repeats={}".format(FLAGS.num_action_repeats),
     "--seed={}".format(FLAGS.seed),
+    "--agent_name={}".format(FLAGS.agent_name),
     "--entropy_cost={}".format(FLAGS.entropy_cost),
     "--baseline_cost={}".format(FLAGS.baseline_cost),
     "--discounting={}".format(FLAGS.discounting),
@@ -141,6 +143,7 @@ def cmd_actor(cluster_desc, worker_desc, task):
     "--actor_hosts={}".format(','.join(cluster_desc.actor_hosts)),
     "--task={}".format(task),
     "--job_name=actor",
+    "--agent_name={}".format(FLAGS.agent_name),
     "--level_name={}".format(FLAGS.level_name),
   ]
 
