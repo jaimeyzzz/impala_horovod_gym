@@ -22,6 +22,8 @@ from __future__ import print_function
 import collections
 import csv
 from time import sleep
+import tempfile
+import os
 
 import paramiko
 import tensorflow as tf
@@ -147,14 +149,19 @@ def cmd_actor(cluster_desc, worker_desc, task):
     "--level_name={}".format(FLAGS.level_name),
   ]
 
+def _long_cmd_in_tmp_file(cmd_str):
+  fd, file_path = tempfile.mkstemp(suffix='.sh')
+  with os.fdopen(fd, "w") as f:
+    f.write(cmd_str)
+  return file_path
+
 
 def _run_worker_local(cmds, tmux_sess_name, job):
   # add your prerequisite code
-  cmds = ['conda activate py27', 'conda deactivate', 'conda activate py27'] + cmds
+  pre_cmds = ['conda activate py27', 'conda deactivate', 'conda activate py27']
 
-  cmd_str = "\n".join(cmds)
   print('sending command to tmux sess {}'.format(tmux_sess_name))
-  print(cmd_str)
+  print("\n".join(cmds))
 
   # find or create the session
   tmux_server = libtmux.Server()
@@ -168,9 +175,22 @@ def _run_worker_local(cmds, tmux_sess_name, job):
   # create new window/pane, get it and send the command
   tmux_sess.new_window(window_name=job)
   pane = tmux_sess.windows[-1].panes[0]
-  pane.send_keys(cmd_str)
+  # run the command
+  cmd_str = "\n".join(pre_cmds + cmds)
+  if len(cmd_str) < 512:
+    pane.send_keys(cmd_str)
+    sleep(0.6)
+  else:
+    # tmux may reject too long command
+    # so let's write it to a temp file, and run it in tmux
+    cmd_str = "\n".join(cmds)
+    tmp_file_path = _long_cmd_in_tmp_file(cmd_str)
+    tmp_cmd_str = pre_cmds + ["cat {}".format(tmp_file_path),
+                              "sh {}".format(tmp_file_path)]
+    pane.send_keys("\n".join(tmp_cmd_str))
+    sleep(0.7)
+    #pos.unlink(tmp_file_path)
 
-  sleep(0.6)
   print("done.\n")
 
 
