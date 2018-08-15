@@ -149,7 +149,8 @@ def cmd_actor(cluster_desc, worker_desc, task):
     "--level_name={}".format(FLAGS.level_name),
   ]
 
-def _long_cmd_in_tmp_file(cmd_str):
+
+def _long_cmd_to_tmp_file(cmd_str):
   fd, file_path = tempfile.mkstemp(suffix='.sh')
   with os.fdopen(fd, "w") as f:
     f.write(cmd_str)
@@ -184,7 +185,7 @@ def _run_worker_local(cmds, tmux_sess_name, job):
     # tmux may reject too long command
     # so let's write it to a temp file, and run it in tmux
     cmd_str = "\n".join(cmds)
-    tmp_file_path = _long_cmd_in_tmp_file(cmd_str)
+    tmp_file_path = _long_cmd_to_tmp_file(cmd_str)
     tmp_cmd_str = pre_cmds + ["cat {}".format(tmp_file_path),
                               "sh {}".format(tmp_file_path)]
     pane.send_keys("\n".join(tmp_cmd_str))
