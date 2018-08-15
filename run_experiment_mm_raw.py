@@ -221,7 +221,7 @@ def run_worker(cluster_desc, worker_desc, task):
     _run_worker_local(cmds, tmux_sess_name=FLAGS.tmux_sess, job=worker_desc.job)
   else:
     _run_worker_ssh(cmds, ip=worker_desc.ip, port=worker_desc.ssh_port,
-                    username=worker_desc.ssh_account,
+                    username=worker_desc.ssh_username,
                     password=worker_desc.ssh_password)
 
 
