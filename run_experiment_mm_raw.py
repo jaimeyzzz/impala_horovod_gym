@@ -281,18 +281,30 @@ def main(_):
   tf.logging.set_verbosity(tf.logging.INFO)
   my_cluster, my_workers = parse_cluster_spec(FLAGS.cluster_csv_path)
 
+  failed_workers = []
   ps_task, learner_task, actor_task = 0, 0, 0
   for w in my_workers:
-    if w.job == 'ps':
-      run_worker(my_cluster, w, ps_task)
-      ps_task += 1
-    elif w.job == 'learner':
-      run_worker(my_cluster, w, learner_task)
-      learner_task += 1
-    elif w.job == 'actor':
-      run_worker(my_cluster, w, actor_task)
-      actor_task += 1
+    try:
+      if w.job == 'ps':
+        run_worker(my_cluster, w, ps_task)
+        ps_task += 1
+      elif w.job == 'learner':
+        run_worker(my_cluster, w, learner_task)
+        learner_task += 1
+      elif w.job == 'actor':
+        run_worker(my_cluster, w, actor_task)
+        actor_task += 1
+    except Exception:
+      failed_workers.append(w)
+      if w.job == 'ps':
+        ps_task += 1
+      elif w.job == 'learner':
+        learner_task += 1
+      elif w.job == 'actor':
+        actor_task += 1
 
+  print('failed workers: {}'.format(len(failed_workers)))
+  print(failed_workers)
 
 if __name__ == '__main__':
   tf.app.run()
