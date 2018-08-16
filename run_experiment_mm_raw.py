@@ -24,6 +24,7 @@ import csv
 from time import sleep
 import tempfile
 import os
+import socket
 
 import paramiko
 import tensorflow as tf
@@ -209,6 +210,16 @@ def _run_worker_ssh(cmds, ip, port, username, password):
   print("done.\n")
 
 
+def _is_ip_local_machine(ip_str):
+  all_local_ips = ['localhost', '127.0.0.1']
+  try:
+    local_real_ip = socket.gethostbyname(socket.gethostname())
+    all_local_ips.append(local_real_ip)
+  except Exception:
+    pass
+  return ip_str in all_local_ips
+
+
 def run_worker(cluster_desc, worker_desc, task):
   cmds = []
   if worker_desc.job == 'ps':
@@ -218,7 +229,7 @@ def run_worker(cluster_desc, worker_desc, task):
   elif worker_desc.job == 'actor':
     cmds.append(_to_cmd_str(cmd_actor(cluster_desc, worker_desc, task)))
 
-  if worker_desc.ip in ('localhost', '127.0.0.1'):
+  if _is_ip_local_machine(worker_desc.ip):
     _run_worker_local(cmds, tmux_sess_name=FLAGS.tmux_sess, job=worker_desc.job)
   else:
     _run_worker_ssh(cmds, ip=worker_desc.ip, port=worker_desc.ssh_port,
