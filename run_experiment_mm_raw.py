@@ -32,6 +32,17 @@ from six.moves import shlex_quote
 import libtmux
 
 
+_RUN_WORKER_LOCAL_PRE_CMDS = [
+  'conda activate py27',
+  'conda deactivate',
+  'conda activate py27'
+]
+
+_RUN_WORKER_SSH_PRE_CMDS = [
+  'cd impala_gym'
+]
+
+
 flags = tf.app.flags
 FLAGS = tf.app.flags.FLAGS
 
@@ -159,9 +170,6 @@ def _long_cmd_to_tmp_file(cmd_str):
 
 
 def _run_worker_local(cmds, tmux_sess_name, job):
-  # add your prerequisite code
-  pre_cmds = ['conda activate py27', 'conda deactivate', 'conda activate py27']
-
   print('sending command to tmux sess {}'.format(tmux_sess_name))
   print("\n".join(cmds))
 
@@ -178,9 +186,10 @@ def _run_worker_local(cmds, tmux_sess_name, job):
   tmux_sess.new_window(window_name=job)
   pane = tmux_sess.windows[-1].panes[0]
   # run the command
+  pre_cmds = _RUN_WORKER_LOCAL_PRE_CMDS
   cmd_str = "\n".join(pre_cmds + cmds)
   if len(cmd_str) < 512:
-    pane.send_keys(cmd_str)
+    pane.send_keys(cmd_str, suppress_history=False)
     sleep(0.6)
   else:
     # tmux may reject too long command
@@ -189,7 +198,7 @@ def _run_worker_local(cmds, tmux_sess_name, job):
     tmp_file_path = _long_cmd_to_tmp_file(cmd_str)
     tmp_cmd_str = pre_cmds + ["cat {}".format(tmp_file_path),
                               "sh {}".format(tmp_file_path)]
-    pane.send_keys("\n".join(tmp_cmd_str))
+    pane.send_keys("\n".join(tmp_cmd_str), suppress_history=False)
     sleep(0.7)
     #pos.unlink(tmp_file_path)
 
@@ -197,6 +206,8 @@ def _run_worker_local(cmds, tmux_sess_name, job):
 
 
 def _run_worker_ssh(cmds, ip, port, username, password):
+  pre_cmds = _RUN_WORKER_SSH_PRE_CMDS
+  cmds = pre_cmds + cmds
   cmd_str = "\n".join(cmds)
   print("sending command to {}@{} -p{} with password {}".format(
     username, ip, port, password))
