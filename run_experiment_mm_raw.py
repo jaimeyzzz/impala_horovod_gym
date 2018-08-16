@@ -38,7 +38,7 @@ FLAGS = tf.app.flags.FLAGS
 
 # Flags used for distributed training.
 flags.DEFINE_string(
-  'cluster_csv_path', 'local_cluster_example.csv',
+  'cluster_csv_path', 'sandbox/local_cluster_example.csv',
   """Cluster description file in CSV format. Each row:  """
   """ip, job_name, tf_port, cuda_visible_devices, ssh_port, ssh_username, ssh_password """
 )
