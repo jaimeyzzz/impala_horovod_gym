@@ -33,12 +33,12 @@ import libtmux
 
 
 _RUN_WORKER_LOCAL_PRE_CMDS = [
-  'conda activate py27',
-  'conda deactivate',
-  'conda activate py27'
+  'source /data1/pythonsun/code/venv_py27/bin/activate',
 ]
 
 _RUN_WORKER_SSH_PRE_CMDS = [
+  'pkill python',
+  'pkill python',
   'cd impala_gym'
 ]
 
@@ -106,6 +106,8 @@ def _to_cmd_str(cmds):
 
 def cmd_ps(cluster_desc, worker_desc, task):
   return [
+    "http_proxy=",
+    "https_proxy=",
     "CUDA_VISIBLE_DEVICES={}".format(worker_desc.cuda_visible_devices),
     "python",
     "experiment.py",
@@ -119,6 +121,8 @@ def cmd_ps(cluster_desc, worker_desc, task):
 
 def cmd_learner(cluster_desc, worker_desc, task):
   return [
+    "http_proxy=",
+    "https_proxy=",
     "CUDA_VISIBLE_DEVICES={}".format(worker_desc.cuda_visible_devices),
     "python",
     "experiment.py",
@@ -149,6 +153,8 @@ def cmd_learner(cluster_desc, worker_desc, task):
 
 def cmd_actor(cluster_desc, worker_desc, task):
   return [
+    "http_proxy=",
+    "https_proxy=",
     "CUDA_VISIBLE_DEVICES={}".format(worker_desc.cuda_visible_devices),
     "python",
     "experiment.py",
@@ -157,6 +163,7 @@ def cmd_actor(cluster_desc, worker_desc, task):
     "--actor_hosts={}".format(','.join(cluster_desc.actor_hosts)),
     "--task={}".format(task),
     "--job_name=actor",
+    "--num_action_repeats={}".format(FLAGS.num_action_repeats),
     "--agent_name={}".format(FLAGS.agent_name),
     "--level_name={}".format(FLAGS.level_name),
   ]
