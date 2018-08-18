@@ -538,7 +538,7 @@ def test(action_set, level_names):
 def main(_):
   tf.logging.set_verbosity(tf.logging.INFO)
 
-  action_set = environments.DEFAULT_ACTION_SET
+  action_set = environments.get_action_set(FLAGS.level_name)
   level_names = [FLAGS.level_name]
 
   if FLAGS.mode == 'train':

@@ -23,57 +23,28 @@ import os.path
 
 import numpy as np
 import tensorflow as tf
+import gym
 
 from atari_env import make_final
 
 nest = tf.contrib.framework.nest
 
 
-class LocalLevelCache(object):
-  """Local level cache."""
-
-  def __init__(self, cache_dir='/tmp/level_cache'):
-    self._cache_dir = cache_dir
-    tf.gfile.MakeDirs(cache_dir)
-
-  def fetch(self, key, pk3_path):
-    path = os.path.join(self._cache_dir, key)
-    if tf.gfile.Exists(path):
-      tf.gfile.Copy(path, pk3_path, overwrite=True)
-      return True
-    return False
-
-  def write(self, key, pk3_path):
-    path = os.path.join(self._cache_dir, key)
-    if not tf.gfile.Exists(path):
-      tf.gfile.Copy(pk3_path, path)
+def get_action_set(level_name):
+  dummy_env = make_final(level_name)
+  return [i for i in range(dummy_env.action_space.n)]
 
 
-"""
-DEFAULT_ACTION_SET = (
-    (0, 0, 0, 1, 0, 0, 0),    # Forward
-    (0, 0, 0, -1, 0, 0, 0),   # Backward
-    (0, 0, -1, 0, 0, 0, 0),   # Strafe Left
-    (0, 0, 1, 0, 0, 0, 0),    # Strafe Right
-    (-20, 0, 0, 0, 0, 0, 0),  # Look Left
-    (20, 0, 0, 0, 0, 0, 0),   # Look Right
-    (-20, 0, 0, 1, 0, 0, 0),  # Look Left + Forward
-    (20, 0, 0, 1, 0, 0, 0),   # Look Right + Forward
-    (0, 0, 0, 0, 1, 0, 0),    # Fire.
-)
-"""
+def get_observation_shape(level_name):
+  dummy_env = make_final(level_name)
+  return dummy_env.observation_space.shape
 
-DEFAULT_ACTION_SET = (
-    (0), 
-    (1), 
-    (2), 
-    (3),
-)
 
 class PyProcessGym(object):
   """gym wrapper for PyProcess."""
-  def __init__(self, level, config):
+  def __init__(self, level):
     self._env = make_final(level, True, True, True, False)
+    assert self._env
 
   def _reset(self):
     return self._env.reset()
@@ -96,10 +67,11 @@ class PyProcessGym(object):
   @staticmethod
   def _tensor_specs(method_name, unused_kwargs, constructor_kwargs):
     """Returns a nest of `TensorSpec` with the method's output specification."""
-    width = constructor_kwargs['config'].get('width', 320)
-    height = constructor_kwargs['config'].get('height', 240)
-
-    observation_spec = tf.contrib.framework.TensorSpec([height, width, 4], tf.uint8)
+    level_name = constructor_kwargs['level']
+    observation_spec = tf.contrib.framework.TensorSpec(
+      get_observation_shape(level_name),
+      tf.uint8
+    )
 
     if method_name == 'initial':
       return observation_spec
