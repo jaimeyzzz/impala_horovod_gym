@@ -32,8 +32,13 @@ from six.moves import shlex_quote
 import libtmux
 
 
+# _RUN_WORKER_LOCAL_PRE_CMDS = [
+#   'source /data1/pythonsun/code/venv_py27/bin/activate',
+# ]
 _RUN_WORKER_LOCAL_PRE_CMDS = [
-  'source /data1/pythonsun/code/venv_py27/bin/activate',
+  'conda activate py27',
+  'conda deactivate',
+  'conda activate py27',
 ]
 
 _RUN_WORKER_SSH_PRE_CMDS = [
@@ -102,21 +107,6 @@ def _to_cmd_str(cmds):
   if isinstance(cmds, (list, tuple)):
     cmds = " ".join(shlex_quote(str(v)) for v in cmds)
   return cmds
-
-
-def cmd_ps(cluster_desc, worker_desc, task):
-  return [
-    "http_proxy=",
-    "https_proxy=",
-    "CUDA_VISIBLE_DEVICES={}".format(worker_desc.cuda_visible_devices),
-    "python",
-    "experiment.py",
-    "--ps_hosts={}".format(','.join(cluster_desc.ps_hosts)),
-    "--learner_hosts={}".format(','.join(cluster_desc.learner_hosts)),
-    "--actor_hosts={}".format(','.join(cluster_desc.actor_hosts)),
-    "--task={}".format(task),
-    "--job_name=ps"
-  ]
 
 
 def cmd_learner(cluster_desc, worker_desc, task):
@@ -240,9 +230,7 @@ def _is_ip_local_machine(ip_str):
 
 def run_worker(cluster_desc, worker_desc, task):
   cmds = []
-  if worker_desc.job == 'ps':
-    cmds.append(_to_cmd_str(cmd_ps(cluster_desc, worker_desc, task)))
-  elif worker_desc.job == 'learner':
+  if worker_desc.job == 'learner':
     cmds.append(_to_cmd_str(cmd_learner(cluster_desc, worker_desc, task)))
   elif worker_desc.job == 'actor':
     cmds.append(_to_cmd_str(cmd_actor(cluster_desc, worker_desc, task)))
@@ -268,9 +256,7 @@ def _parse_cluster(workers):
   ps_hosts, learner_hosts, actor_hosts = [], [], []
   for w in workers:
     item = '{}:{}'.format(w.ip, w.tf_port)
-    if w.job == 'ps':
-      ps_hosts.append(item)
-    elif w.job == 'learner':
+    if w.job == 'learner':
       learner_hosts.append(item)
     elif w.job == 'actor':
       actor_hosts.append(item)
@@ -289,13 +275,10 @@ def main(_):
   my_cluster, my_workers = parse_cluster_spec(FLAGS.cluster_csv_path)
 
   failed_workers = []
-  ps_task, learner_task, actor_task = 0, 0, 0
+  learner_task, actor_task = 0, 0
   for w in my_workers:
     try:
-      if w.job == 'ps':
-        run_worker(my_cluster, w, ps_task)
-        ps_task += 1
-      elif w.job == 'learner':
+      if w.job == 'learner':
         run_worker(my_cluster, w, learner_task)
         learner_task += 1
       elif w.job == 'actor':
@@ -303,13 +286,12 @@ def main(_):
         actor_task += 1
     except Exception:
       failed_workers.append(w)
-      if w.job == 'ps':
-        ps_task += 1
-      elif w.job == 'learner':
+      if w.job == 'learner':
         learner_task += 1
       elif w.job == 'actor':
         actor_task += 1
 
+  print('successful workers: {}'.format(len(my_workers) - len(failed_workers)))
   print('failed workers: {}'.format(len(failed_workers)))
   print(failed_workers)
 
