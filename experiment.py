@@ -43,7 +43,6 @@ flags.DEFINE_enum('mode', 'train', ['train', 'test'], 'Training or test mode.')
 flags.DEFINE_integer('test_num_episodes', 10, 'Number of episodes per level.')
 
 # Flags used for distributed training.
-flags.DEFINE_string('ps_hosts', 'localhost:8000', 'ps hosts.')
 flags.DEFINE_string('learner_hosts', 'localhost:8001,localhosts:8002',
                     'learner hosts.')
 flags.DEFINE_string('actor_hosts', 'localhost:9001,localhosts:9002',
@@ -332,11 +331,9 @@ def pin_global_variables(device):
 def train(action_set, level_names):
   """Train."""
 
-  ps_job_device = '/job:ps/task:0'
   local_job_device = '/job:%s/task:%d' % (FLAGS.job_name, FLAGS.task)
   # for learner task i, the shared job is itself
   # for actor task i, the shared job is the learner in round robin order
-  ps_hosts = FLAGS.ps_hosts.split(',')
   actor_hosts = FLAGS.actor_hosts.split(',')
   learner_hosts = FLAGS.learner_hosts.split(',')
   num_learners = len(learner_hosts)
@@ -349,21 +346,15 @@ def train(action_set, level_names):
   is_learner_fn = lambda i: FLAGS.job_name == 'learner' and i == FLAGS.task
   # Placing the variable on CPU, makes it cheaper to send it to all the
   # actors. Continual copying the variables from the GPU is slow.
-  global_variable_device = shared_job_device + '/cpu'
+  global_variable_device = '/job:learner/task:0' + '/cpu'
   cluster = tf.train.ClusterSpec({
-    'ps': FLAGS.ps_hosts.split(','),
     'actor': FLAGS.actor_hosts.split(','),
     'learner': FLAGS.learner_hosts.split(',')
   })
   server = tf.train.Server(cluster, job_name=FLAGS.job_name,
                            task_index=FLAGS.task)
-  filters = [ps_job_device, shared_job_device, local_job_device]
-
-
-  # just wait if parameter server
-  if FLAGS.job_name == 'ps':
-    server.join()
-    return
+  #filters = [global_variable_device, shared_job_device, local_job_device]
+  filters = []
 
   # Only used to find the actor output structure.
   Agent = agent_factory(FLAGS.agent_name)
@@ -376,11 +367,9 @@ def train(action_set, level_names):
     shapes = [t.shape.as_list() for t in flattened_structure]
 
   # build graph for actor or learner
-  dev_fn = tf.train.replica_device_setter(
-    ps_tasks=1, ps_device='/job:ps', worker_device=local_job_device + '/cpu'
-  )
   with tf.Graph().as_default(), \
-       tf.device(dev_fn):
+       tf.device(local_job_device + '/cpu'), \
+       pin_global_variables(global_variable_device):
     tf.set_random_seed(FLAGS.seed)  # Makes initialization deterministic.
 
     # Create Queue and Agent on the learner.
