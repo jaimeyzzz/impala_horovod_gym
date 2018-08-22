@@ -23,6 +23,7 @@ import contextlib
 
 import numpy as np
 import tensorflow as tf
+import horovod.tensorflow as hvd
 from six.moves import range
 
 import environments
@@ -43,8 +44,8 @@ flags.DEFINE_enum('mode', 'train', ['train', 'test'], 'Training or test mode.')
 flags.DEFINE_integer('test_num_episodes', 10, 'Number of episodes per level.')
 
 # Flags used for distributed training.
-flags.DEFINE_string('learner_hosts', 'localhost:8001,localhosts:8002',
-                    'learner hosts.')
+flags.DEFINE_string('learner_host', 'localhost:8001',
+                    'learner host, only one allowed.')
 flags.DEFINE_string('actor_hosts', 'localhost:9001,localhosts:9002',
                     'actor hosts.')
 flags.DEFINE_integer('task', -1, 'Task id. Use -1 for local training.')
@@ -270,12 +271,8 @@ def build_learner(agent, agent_state, env_outputs, agent_outputs, g_step):
                                             FLAGS.total_environment_frames, 0)
   optimizer = tf.train.RMSPropOptimizer(learning_rate, FLAGS.decay,
                                         FLAGS.momentum, FLAGS.epsilon)
-  num_learners = len(FLAGS.learner_hosts.split(','))
-  optimizer = tf.train.SyncReplicasOptimizer(
-    optimizer,
-    replicas_to_aggregate=num_learners,
-    total_num_replicas=num_learners
-  )
+  # horovod all-reduce optimizer
+  optimizer = hvd.DistributedOptimizer(optimizer)
   train_op = optimizer.minimize(total_loss, global_step=g_step)
 
   # Merge updating the network and environment frames into a single tensor.
@@ -332,29 +329,27 @@ def train(action_set, level_names):
   """Train."""
 
   local_job_device = '/job:%s/task:%d' % (FLAGS.job_name, FLAGS.task)
-  # for learner task i, the shared job is itself
-  # for actor task i, the shared job is the learner in round robin order
-  actor_hosts = FLAGS.actor_hosts.split(',')
-  learner_hosts = FLAGS.learner_hosts.split(',')
-  num_learners = len(learner_hosts)
-  num_actors = len(actor_hosts)
-  shared_job_device = '/job:learner/task:{}'.format(
-    FLAGS.task if FLAGS.job_name == 'learner' else
-    FLAGS.task % num_learners
-  )
+  shared_job_device = '/job:learner/task:0'
   is_actor_fn = lambda i: FLAGS.job_name == 'actor' and i == FLAGS.task
-  is_learner_fn = lambda i: FLAGS.job_name == 'learner' and i == FLAGS.task
+  is_learner = FLAGS.job_name == 'learner'
+  actor_hosts = FLAGS.actor_hosts.split(',')
+  num_actors = len(actor_hosts)
+  learner_host = FLAGS.learner_host.split(',')
+  assert(len(learner_host) == 1)
+  if is_learner:
+    assert(FLAGS.task == 0)
+
+  if is_learner:
+    hvd.init()
+
   # Placing the variable on CPU, makes it cheaper to send it to all the
   # actors. Continual copying the variables from the GPU is slow.
   global_variable_device = '/job:learner/task:0' + '/cpu'
-  cluster = tf.train.ClusterSpec({
-    'actor': FLAGS.actor_hosts.split(','),
-    'learner': FLAGS.learner_hosts.split(',')
-  })
+  cluster = tf.train.ClusterSpec({'actor': actor_hosts,
+                                  'learner': learner_host})
   server = tf.train.Server(cluster, job_name=FLAGS.job_name,
                            task_index=FLAGS.task)
-  #filters = [global_variable_device, shared_job_device, local_job_device]
-  filters = []
+  filters = [shared_job_device, local_job_device]
 
   # Only used to find the actor output structure.
   Agent = agent_factory(FLAGS.agent_name)
@@ -389,67 +384,64 @@ def train(action_set, level_names):
           enqueue_ops.append(queue.enqueue(nest.flatten(actor_output)))
 
     # Build learner.
-    for i in range(num_learners):
-      if is_learner_fn(i):
-        # Create global step, which is the number of environment frames
-        # processed.
-        g_step = tf.get_variable(
-          'num_environment_frames', initializer=tf.zeros_initializer(),
-          shape=[], dtype=tf.int64, trainable=False,
-          collections=[tf.GraphKeys.GLOBAL_STEP, tf.GraphKeys.GLOBAL_VARIABLES]
+    if is_learner:
+      # Create global step, which is the number of environment frames
+      # processed.
+      g_step = tf.get_variable(
+        'num_environment_frames', initializer=tf.zeros_initializer(),
+        shape=[], dtype=tf.int64, trainable=False,
+        collections=[tf.GraphKeys.GLOBAL_STEP, tf.GraphKeys.GLOBAL_VARIABLES]
+      )
+      # Create batch (time major) and recreate structure.
+      dequeued = queue.dequeue_many(FLAGS.batch_size)
+      dequeued = nest.pack_sequence_as(structure, dequeued)
+      def make_time_major(s):
+        return nest.map_structure(
+          lambda t: tf.transpose(t, [1, 0] + list(range(t.shape.ndims))[2:]),
+          s
         )
+      dequeued = dequeued._replace(
+          env_outputs=make_time_major(dequeued.env_outputs),
+          agent_outputs=make_time_major(dequeued.agent_outputs))
 
-        # Create batch (time major) and recreate structure.
-        dequeued = queue.dequeue_many(FLAGS.batch_size)
-        dequeued = nest.pack_sequence_as(structure, dequeued)
-
-        def make_time_major(s):
-          return nest.map_structure(
-            lambda t: tf.transpose(t, [1, 0] + list(range(t.shape.ndims))[2:]),
-            s
-          )
-
-        dequeued = dequeued._replace(
-            env_outputs=make_time_major(dequeued.env_outputs),
-            agent_outputs=make_time_major(dequeued.agent_outputs))
-
-        with tf.device('/gpu'):  # TODO(pengsun): gpu device index?
-          # Using StagingArea allows us to prepare the next batch and send it to
-          # the GPU while we're performing a training step. This adds up to 1
-          # step policy lag.
-          flattened_output = nest.flatten(dequeued)
-          area = tf.contrib.staging.StagingArea(
-              [t.dtype for t in flattened_output],
-              [t.shape for t in flattened_output])
-          stage_op = area.put(flattened_output)
-
-          data_from_actors = nest.pack_sequence_as(structure, area.get())
-
-          # Unroll agent on sequence, create losses and update ops.
-
-          if hasattr(data_from_actors, 'agent_state'):
-            agent_state = data_from_actors.agent_state
-          else:
-            agent_state = agent.initial_state(1)
-          output, optimizer = build_learner(
-            agent,
-            agent_state=agent_state,
-            env_outputs=data_from_actors.env_outputs,
-            agent_outputs=data_from_actors.agent_outputs,
-            g_step=g_step)
+      with tf.device('/gpu'):  # TODO(pengsun): gpu device index?
+        # Using StagingArea allows us to prepare the next batch and send it to
+        # the GPU while we're performing a training step. This adds up to 1
+        # step policy lag.
+        flattened_output = nest.flatten(dequeued)
+        area = tf.contrib.staging.StagingArea(
+            [t.dtype for t in flattened_output],
+            [t.shape for t in flattened_output])
+        stage_op = area.put(flattened_output)
+        data_from_actors = nest.pack_sequence_as(structure, area.get())
+        # Unroll agent on sequence, create losses and update ops.
+        if hasattr(data_from_actors, 'agent_state'):
+          agent_state = data_from_actors.agent_state
+        else:
+          agent_state = agent.initial_state(1)
+        output, optimizer = build_learner(
+          agent,
+          agent_state=agent_state,
+          env_outputs=data_from_actors.env_outputs,
+          agent_outputs=data_from_actors.agent_outputs,
+          g_step=g_step)
 
     # Create MonitoredSession (to run the graph, checkpoint and log).
-    is_learner = FLAGS.job_name == 'learner'
-    is_chief = is_learner_fn(0)  # learner 0 is the chief
+    is_chief = is_learner # MonitoredTrainingSession inits all global variables
     hooks = [py_process.PyProcessHook()]
-    if is_learner_fn(FLAGS.task):  # required!
-      hooks.append(optimizer.make_session_run_hook(is_chief))
+    if is_learner:
+      # for variable initialization across learners
+      hooks.append(hvd.BroadcastGlobalVariablesHook(0))
     tf.logging.info('Creating MonitoredSession, is_chief %s', is_chief)
+    if is_learner:
+      tf.logging.info('At rank %d', hvd.rank())
     config = tf.ConfigProto(allow_soft_placement=True, device_filters=filters)
+    # rank 0 takes care of ckpt saving
+    checkpoint_dir = FLAGS.logdir if is_learner and hvd.rank() == 0 else None
     with tf.train.MonitoredTrainingSession(
         server.target,
         is_chief=is_chief,
-        checkpoint_dir=FLAGS.logdir,
+        checkpoint_dir=checkpoint_dir,
         save_checkpoint_secs=600,
         save_summaries_secs=30,
         log_step_count_steps=50000,
@@ -459,7 +451,7 @@ def train(action_set, level_names):
       if is_learner:
         # tb Logging
         summary_writer = (tf.summary.FileWriterCache.get(FLAGS.logdir) if
-                          is_chief else None)
+                          hvd.rank() == 0 else None)
 
         # Prepare data for first run.
         session.run_step_fn(
@@ -478,10 +470,10 @@ def train(action_set, level_names):
               infos_v.episode_step[done_v]):
             episode_frames = episode_step * FLAGS.num_action_repeats
 
-            tf.logging.info('learner: %d Env: %s Episode return: %f',
-                            FLAGS.task, level_name, episode_return)
+            tf.logging.info('learner rank: %d, Env: %s Episode return: %f',
+                            hvd.rank(), level_name, episode_return)
 
-            if is_chief:  # tb Logging
+            if hvd.rank() == 0:  # tb Logging
               summary = tf.summary.Summary()
               summary.value.add(tag=level_name + '/episode_return',
                                 simple_value=episode_return)
