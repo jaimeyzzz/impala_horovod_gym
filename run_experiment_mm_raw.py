@@ -54,8 +54,8 @@ FLAGS = tf.app.flags.FLAGS
 
 # Flags used for distributed training.
 flags.DEFINE_string(
-  'cluster_csv_path', 'sandbox/local_cluster_example.csv',
-  """Cluster description file in CSV format. Each row:  """
+  'workers_csv_path', 'sandbox/local_workers_example.csv',
+  """Workers description file in CSV format. Each row:  """
   """ip, job_name, tf_port, cuda_visible_devices, ssh_port, ssh_username, ssh_password """
 )
 flags.DEFINE_string('tmux_sess', 'impala',
@@ -93,31 +93,57 @@ flags.DEFINE_float('momentum', 0., 'RMSProp momentum.')
 flags.DEFINE_float('epsilon', .1, 'RMSProp epsilon.')
 
 
-ClusterDesc = collections.namedtuple(
-  'ClusterDesc',
-  'ps_hosts learner_hosts actor_hosts'
+TFClusterDesc = collections.namedtuple(
+  'TFClusterDesc',
+  'learner_hosts actor_hosts'
 )
 WorkerDesc = collections.namedtuple(
   'WorkerDesc',
   'job ip tf_port cuda_visible_devices ssh_port ssh_username ssh_password'
 )
+WorkerSetDesc = collections.namedtuple(
+  'WorkerSetDesc',  # each learner or actor is a WorkerDesc. Only ONE learner
+  'learner actors'
+)
 
 
 def _to_cmd_str(cmds):
   if isinstance(cmds, (list, tuple)):
-    cmds = " ".join(shlex_quote(str(v)) for v in cmds)
+    #cmds = " ".join(shlex_quote(str(v)) for v in cmds)
+    cmds = ' '.join(str(v) for v in cmds)
   return cmds
 
 
-def cmd_learner(cluster_desc, worker_desc, task):
+def cmd_learners_mpirun_common(worker_sets):
+  learners = [ws.learner[0] for ws in worker_sets]
+  hosts = ','.join([str(l.ip) for l in learners])
   return [
-    "http_proxy=",
-    "https_proxy=",
-    "CUDA_VISIBLE_DEVICES={}".format(worker_desc.cuda_visible_devices),
+    'mpirun',
+    '-H', hosts,
+  ]
+
+
+def cmd_learner_mpirun_prefix(cluster_desc, worker_desc, task):
+  assert (worker_desc.job == 'learner')
+  return [
+    '-np', str(1),
+    '-bind-to', 'none',
+    '-map-by', 'slot',
+    '-mca', 'pml ob1',
+    '-mca', 'btl ^tcp',
+    '-x', 'NCCL_DEBUG=INFO',
+    '-x', 'http_proxy=',
+    '-x', 'https_proxy=',
+    '-x', 'CUDA_VISIBLE_DEVICES={}'.format(worker_desc.cuda_visible_devices)
+  ]
+
+
+def cmd_learner(cluster_desc, worker_desc, task):
+  assert(worker_desc.job == 'learner')
+  return [
     "python",
     "experiment.py",
-    "--ps_hosts={}".format(','.join(cluster_desc.ps_hosts)),
-    "--learner_hosts={}".format(','.join(cluster_desc.learner_hosts)),
+    "--learner_host={}".format(','.join(cluster_desc.learner_hosts)),
     "--actor_hosts={}".format(','.join(cluster_desc.actor_hosts)),
     "--task={}".format(task),
     "--job_name=learner",
@@ -142,14 +168,14 @@ def cmd_learner(cluster_desc, worker_desc, task):
 
 
 def cmd_actor(cluster_desc, worker_desc, task):
+  assert(worker_desc.job == 'actor')
   return [
     "http_proxy=",
     "https_proxy=",
     "CUDA_VISIBLE_DEVICES={}".format(worker_desc.cuda_visible_devices),
     "python",
     "experiment.py",
-    "--ps_hosts={}".format(','.join(cluster_desc.ps_hosts)),
-    "--learner_hosts={}".format(','.join(cluster_desc.learner_hosts)),
+    "--learner_host={}".format(','.join(cluster_desc.learner_hosts)),
     "--actor_hosts={}".format(','.join(cluster_desc.actor_hosts)),
     "--task={}".format(task),
     "--job_name=actor",
@@ -159,6 +185,40 @@ def cmd_actor(cluster_desc, worker_desc, task):
   ]
 
 
+def parse_workers(workers_csv_path):
+  workers = []
+  with open(workers_csv_path, "rb") as f:
+    reader = csv.DictReader(f, delimiter=",")
+    for i, line in enumerate(reader):
+      workers.append(WorkerDesc(**line))
+  return workers
+
+
+def split_worker_sets(all_workers):
+  learners = [w for w in all_workers if w.job == 'learner']
+  actors = [w for w in all_workers if w.job == 'actor']
+
+  worker_sets = []
+  for l in learners:
+    worker_sets.append(WorkerSetDesc(learner=[l], actors=[]))
+  for i, a in enumerate(actors): # "link" to a learner in round-robin order
+    i_learner = i % len(worker_sets)
+    worker_sets[i_learner].actors.append(a)
+  return worker_sets
+
+
+def to_tf_cluster(worker_set):
+  w = worker_set.learner[0]
+  item = '{}:{}'.format(w.ip, w.tf_port)
+  learner_hosts = [item]
+
+  actor_hosts = []
+  for w in worker_set.actors:
+    item = '{}:{}'.format(w.ip, w.tf_port)
+    actor_hosts.append(item)
+  return TFClusterDesc(learner_hosts=learner_hosts, actor_hosts=actor_hosts)
+
+
 def _long_cmd_to_tmp_file(cmd_str):
   fd, file_path = tempfile.mkstemp(suffix='.sh')
   with os.fdopen(fd, "w") as f:
@@ -166,7 +226,7 @@ def _long_cmd_to_tmp_file(cmd_str):
   return file_path
 
 
-def _run_worker_local(cmds, tmux_sess_name, job):
+def run_cmds_local(cmds, tmux_sess_name, tmux_win_name):
   print('sending command to tmux sess {}'.format(tmux_sess_name))
   print("\n".join(cmds))
 
@@ -180,7 +240,7 @@ def _run_worker_local(cmds, tmux_sess_name, job):
   if tmux_sess is None:
     tmux_sess = tmux_server.new_session(tmux_sess_name)
   # create new window/pane, get it and send the command
-  tmux_sess.new_window(window_name=job)
+  tmux_sess.new_window(window_name=tmux_win_name)
   pane = tmux_sess.windows[-1].panes[0]
   # run the command
   pre_cmds = _RUN_WORKER_LOCAL_PRE_CMDS
@@ -202,7 +262,7 @@ def _run_worker_local(cmds, tmux_sess_name, job):
   print("done.\n")
 
 
-def _run_worker_ssh(cmds, ip, port, username, password):
+def run_cmds_ssh(cmds, ip, port, username, password):
   pre_cmds = _RUN_WORKER_SSH_PRE_CMDS
   cmds = pre_cmds + cmds
   cmd_str = "\n".join(cmds)
@@ -228,72 +288,59 @@ def _is_ip_local_machine(ip_str):
   return ip_str in all_local_ips
 
 
-def run_worker(cluster_desc, worker_desc, task):
+def run_actor(tf_cluster, worker, task):
+  assert(worker.job == 'actor')
+
   cmds = []
-  if worker_desc.job == 'learner':
-    cmds.append(_to_cmd_str(cmd_learner(cluster_desc, worker_desc, task)))
-  elif worker_desc.job == 'actor':
-    cmds.append(_to_cmd_str(cmd_actor(cluster_desc, worker_desc, task)))
+  cmds.append(_to_cmd_str(cmd_actor(tf_cluster, worker, task)))
 
-  if _is_ip_local_machine(worker_desc.ip):
-    _run_worker_local(cmds, tmux_sess_name=FLAGS.tmux_sess, job=worker_desc.job)
+  if _is_ip_local_machine(worker.ip):
+    run_cmds_local(cmds, tmux_sess_name=FLAGS.tmux_sess,
+                   tmux_win_name=worker.job)
   else:
-    _run_worker_ssh(cmds, ip=worker_desc.ip, port=worker_desc.ssh_port,
-                    username=worker_desc.ssh_username,
-                    password=worker_desc.ssh_password)
+    run_cmds_ssh(cmds, ip=worker.ip, port=worker.ssh_port,
+                 username=worker.ssh_username,
+                 password=worker.ssh_password)
 
 
-def _parse_workers(cluster_csv_path):
-  workers = []
-  with open(cluster_csv_path, "rb") as f:
-    reader = csv.DictReader(f, delimiter=",")
-    for i, line in enumerate(reader):
-      workers.append(WorkerDesc(**line))
-  return workers
+def run_learners(worker_sets):
+  cmds_common = cmd_learners_mpirun_common(worker_sets)
+  cmds_per = []
+  for w_set in worker_sets:
+    tf_cluster = to_tf_cluster(w_set)
+    learner = w_set.learner[0]  # should be only one
+    cmd = cmd_learner_mpirun_prefix(tf_cluster, learner, task=0)
+    cmd += cmd_learner(tf_cluster, learner, task=0)
+    cmds_per.append(_to_cmd_str(cmd))
+  cmds = [_to_cmd_str(cmds_common) + ' ' + ' : '.join(cmds_per)]
 
-
-def _parse_cluster(workers):
-  ps_hosts, learner_hosts, actor_hosts = [], [], []
-  for w in workers:
-    item = '{}:{}'.format(w.ip, w.tf_port)
-    if w.job == 'learner':
-      learner_hosts.append(item)
-    elif w.job == 'actor':
-      actor_hosts.append(item)
-  return ClusterDesc(ps_hosts=ps_hosts, learner_hosts=learner_hosts,
-                     actor_hosts=actor_hosts)
-
-
-def parse_cluster_spec(cluster_csv_path):
-  workers = _parse_workers(cluster_csv_path)
-  cluster = _parse_cluster(workers)
-  return cluster, workers
+  run_cmds_local(cmds, FLAGS.tmux_sess, tmux_win_name='learners')
 
 
 def main(_):
   tf.logging.set_verbosity(tf.logging.INFO)
-  my_cluster, my_workers = parse_cluster_spec(FLAGS.cluster_csv_path)
 
-  failed_workers = []
-  learner_task, actor_task = 0, 0
-  for w in my_workers:
-    try:
-      if w.job == 'learner':
-        run_worker(my_cluster, w, learner_task)
-        learner_task += 1
-      elif w.job == 'actor':
-        run_worker(my_cluster, w, actor_task)
-        actor_task += 1
-    except Exception:
-      failed_workers.append(w)
-      if w.job == 'learner':
-        learner_task += 1
-      elif w.job == 'actor':
-        actor_task += 1
+  all_workers = parse_workers(FLAGS.workers_csv_path)
+  worker_sets = split_worker_sets(all_workers)
 
-  print('successful workers: {}'.format(len(my_workers) - len(failed_workers)))
-  print('failed workers: {}'.format(len(failed_workers)))
-  print(failed_workers)
+  # run actors in each worker set
+  failed_actors = []
+  for w_set in worker_sets:
+    tf_cluster = to_tf_cluster(w_set)
+    task = 0
+    for worker in w_set.actors:
+      try:
+        run_actor(tf_cluster, worker, task)
+      except Exception:
+        failed_actors.append(worker)
+      task += 1
+
+  # run learners across all worker sets
+  run_learners(worker_sets)
+
+  print('failed actors: {}'.format(len(failed_actors)))
+  print(failed_actors)
+
 
 if __name__ == '__main__':
   tf.app.run()
