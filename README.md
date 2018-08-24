@@ -24,7 +24,7 @@ above packages.
 We offer a couple of ways to run the training code, as described below.
 
 ### With Native Distributed Tensorflow and Horovod
-Follow the distributed Tensorflow convention to run `experiment.py` as actors,
+First follow the distributed Tensorflow convention to run `experiment.py` as actors,
 then follow the Horovod convention to run `experiment.py` as learner(s) with 
 `mpirun`. 
 

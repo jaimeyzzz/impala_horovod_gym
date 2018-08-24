@@ -1,5 +1,5 @@
 # Run the Code with Native Distributed Tensorflow and Horovod
-Follow the distributed Tensorflow convention to run `experiment.py` as actors,
+First follow the distributed Tensorflow convention to run `experiment.py` as actors,
 then follow the Horovod convention to run `experiment.py` as learner(s) with 
 `mpirun` (see [Horovod docs](https://github.com/uber/horovod#usage)). 
 
@@ -37,6 +37,8 @@ python experiment.py \
 Example 2:  2 learners 3 actors.
 The learner `localhost:8001` links to the two actors `localhost:9000,localhost:9003`,
 and the learner `localhost:8002` links to the actor `localhost:9002`.
+The two learners `localhost:8001,localhost:8002` are paralleled by `horovod` using 
+`mpirun`.
 Run the following commands in 4 separate terminals.
 ```bash
 mpirun -H localhost,localhost \
