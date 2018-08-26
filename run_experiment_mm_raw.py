@@ -31,15 +31,14 @@ import tensorflow as tf
 from six.moves import shlex_quote
 import libtmux
 
-
-# _RUN_WORKER_LOCAL_PRE_CMDS = [
-#   'source /data1/pythonsun/code/venv_py27/bin/activate',
-# ]
 _RUN_WORKER_LOCAL_PRE_CMDS = [
-  'conda activate py27',
-  'conda deactivate',
-  'conda activate py27',
+  'echo impala_gym',
 ]
+#_RUN_WORKER_LOCAL_PRE_CMDS = [
+#  'conda activate py27',
+#  'conda deactivate',
+#  'conda activate py27',
+#]
 
 _RUN_WORKER_SSH_PRE_CMDS = [
   'pkill python',
@@ -118,7 +117,9 @@ def cmd_learners_mpirun_common(worker_sets):
   learners = [ws.learner[0] for ws in worker_sets]
   hosts = ','.join([str(l.ip) for l in learners])
   return [
+    'CUDA_VISIBLE_DEVICES=4,5',
     'mpirun',
+    '--allow-run-as-root',
     '-H', hosts,
   ]
 
@@ -130,11 +131,11 @@ def cmd_learner_mpirun_prefix(cluster_desc, worker_desc, task):
     '-bind-to', 'none',
     '-map-by', 'slot',
     '-mca', 'pml ob1',
-    '-mca', 'btl ^tcp',
+    '-mca', 'btl ^openib',
     '-x', 'NCCL_DEBUG=INFO',
     '-x', 'http_proxy=',
     '-x', 'https_proxy=',
-    '-x', 'CUDA_VISIBLE_DEVICES={}'.format(worker_desc.cuda_visible_devices)
+    #'-x', 'CUDA_VISIBLE_DEVICES={}'.format(worker_desc.cuda_visible_devices)
   ]
 
 

@@ -345,11 +345,15 @@ def train(action_set, level_names):
   # Placing the variable on CPU, makes it cheaper to send it to all the
   # actors. Continual copying the variables from the GPU is slow.
   global_variable_device = '/job:learner/task:0' + '/cpu'
+  filters = [shared_job_device, local_job_device]
   cluster = tf.train.ClusterSpec({'actor': actor_hosts,
                                   'learner': learner_host})
+  config = tf.ConfigProto(allow_soft_placement=True, device_filters=filters)
+  if is_learner:
+    config.gpu_options.allow_growth = True
+    config.gpu_options.visible_device_list = str(hvd.local_rank())
   server = tf.train.Server(cluster, job_name=FLAGS.job_name,
-                           task_index=FLAGS.task)
-  filters = [shared_job_device, local_job_device]
+                           task_index=FLAGS.task, config=config)
 
   # Only used to find the actor output structure.
   Agent = agent_factory(FLAGS.agent_name)
@@ -404,7 +408,7 @@ def train(action_set, level_names):
           env_outputs=make_time_major(dequeued.env_outputs),
           agent_outputs=make_time_major(dequeued.agent_outputs))
 
-      with tf.device('/gpu'):  # TODO(pengsun): gpu device index?
+      with tf.device("/gpu"): 
         # Using StagingArea allows us to prepare the next batch and send it to
         # the GPU while we're performing a training step. This adds up to 1
         # step policy lag.
@@ -435,7 +439,6 @@ def train(action_set, level_names):
     tf.logging.info('Creating MonitoredSession, is_chief %s', is_chief)
     if is_learner:
       tf.logging.info('At rank %d', hvd.rank())
-    config = tf.ConfigProto(allow_soft_placement=True, device_filters=filters)
     # rank 0 takes care of ckpt saving
     checkpoint_dir = FLAGS.logdir if is_learner and hvd.rank() == 0 else None
     with tf.train.MonitoredTrainingSession(
