@@ -22,9 +22,13 @@ import collections
 import contextlib
 
 import numpy as np
-import tensorflow as tf
-import horovod.tensorflow as hvd
 from six.moves import range
+import tensorflow as tf
+try:
+  import horovod.tensorflow as hvd
+  has_horovod = True
+except ImportError:
+  has_horovod = False  # Actor does not need horovod
 
 import environments
 from agent import agent_factory
@@ -338,8 +342,7 @@ def train(action_set, level_names):
   assert(len(learner_host) == 1)
   if is_learner:
     assert(FLAGS.task == 0)
-
-  if is_learner:
+    assert(has_horovod == True)
     hvd.init()
 
   # Placing the variable on CPU, makes it cheaper to send it to all the
