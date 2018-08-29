@@ -117,7 +117,7 @@ def cmd_learners_mpirun_common(worker_sets):
   learners = [ws.learner[0] for ws in worker_sets]
   hosts = ','.join([str(l.ip) for l in learners])
   return [
-    'CUDA_VISIBLE_DEVICES=4,5',
+    #'CUDA_VISIBLE_DEVICES=6,7',
     'mpirun',
     '--allow-run-as-root',
     '-H', hosts,
@@ -183,6 +183,7 @@ def cmd_actor(cluster_desc, worker_desc, task):
     "--num_action_repeats={}".format(FLAGS.num_action_repeats),
     "--agent_name={}".format(FLAGS.agent_name),
     "--level_name={}".format(FLAGS.level_name),
+    "--unroll_length={}".format(FLAGS.unroll_length),
   ]
 
 
