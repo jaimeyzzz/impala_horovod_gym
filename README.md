@@ -36,9 +36,17 @@ which wraps `experiment.py` by reading the `learner_hosts` and
 `actor_hosts` from a separate csv file prepared beforehand.
 Examples:
 ```bash
-python run_exeriment_mm_raw.py \
-    --cluster_csv_path=sandbox/local_cluster_example.csv \
-    --agent_name=ResNetLSTMAgent
+python run_experiment_mm_raw.py \
+  --workers_csv_path=sandbox/local_workers_example.csv \
+  --level_name=BreakoutNoFrameskip-v4 \
+  --agent_name=SimpleConvNetAgent \
+  --num_action_repeats=1 \
+  --batch_size=32 \
+  --unroll_length=20 \
+  --entropy_cost=0.01 \
+  --learning_rate=0.0006 \
+  --total_environment_frames=200000000 \
+  --reward_clipping=abs_one
 ```
 
 ### With Cluster Management Tool
