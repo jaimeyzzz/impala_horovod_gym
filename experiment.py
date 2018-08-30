@@ -62,7 +62,6 @@ flags.DEFINE_integer('total_environment_frames', int(1e9),
                      'Total environment frames to train for.')
 flags.DEFINE_integer('batch_size', 2, 'Batch size for training.')
 flags.DEFINE_integer('unroll_length', 100, 'Unroll length in agent steps.')
-flags.DEFINE_integer('num_action_repeats', 1, 'Number of action repeats.')
 flags.DEFINE_integer('seed', 1, 'Random seed.')
 flags.DEFINE_string('agent_name', 'SimpleConvNetAgent', 'agent name.')
 
@@ -282,7 +281,7 @@ def build_learner(agent, agent_state, env_outputs, agent_outputs, g_step):
   # Merge updating the network and environment frames into a single tensor.
   with tf.control_dependencies([train_op]):
     num_env_frames_and_train = num_env_frames.assign_add(
-        FLAGS.batch_size * FLAGS.unroll_length * FLAGS.num_action_repeats)
+        FLAGS.batch_size * FLAGS.unroll_length)
 
   # Adding a few summaries.
   tf.summary.scalar('learning_rate', learning_rate)
@@ -308,7 +307,6 @@ def create_environment(level_name, seed, is_test=False):
     # https://github.com/deepmind/lab/blob/master/docs/users/python_api.md
     config['mixerSeed'] = 0x600D5EED
   p = py_process.PyProcess(environments.PyProcessGym, level_name, config)
-                           #FLAGS.num_action_repeats, seed)
   return environments.FlowEnvironment(p.proxy)
 
 
@@ -474,7 +472,7 @@ def train(action_set, level_names):
               level_names_v[done_v],
               infos_v.episode_return[done_v],
               infos_v.episode_step[done_v]):
-            episode_frames = episode_step * FLAGS.num_action_repeats
+            episode_frames = episode_step
 
             tf.logging.info('learner rank: %d, Env: %s Episode return: %f',
                             hvd.rank(), level_name, episode_return)
