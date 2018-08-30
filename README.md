@@ -50,5 +50,18 @@ python run_experiment_mm_raw.py \
   --reward_clipping=abs_one
 ```
 
+See `sandbox/local_workers_example.csv` for the CSV fields you must provide.
+The field names should be self-explanatory.
+
+If you have access to some cloud service where you can apply many cheap CPU machines,
+(Or you happen to be from internal Tencent and have access to the c.oa.com "compute sharing platform",)
+see the description [here](coa) for how to prepare CSV file.
+
 ### With Cluster Management Tool
 TODO
+
+## Running the Code for Evaluating
+TODO
+
+## Case Studies
+TODO: figures/tables for the training speed and socres over PongNoFrameskip-v4. 
