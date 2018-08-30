@@ -1,10 +1,11 @@
 # Our Tweak of IMPALA
 Our tweak of the [IMPALA](https://github.com/deepmind/scalable_agent) code.
 We modify the original code to support:
-* Multiple-machine-multiple-gpu training (with distributed Tensorflow and
- [Horovod](https://github.com/uber/horovod))
+* Multiple-learner-multiple-actor training (see [here](sandbox/MLMA.md) for a brief description)
 * OpenAI Gym compatibility
 * More Neural Network architectures 
+
+
 
 ## Dependencies
 Install the following python packages:
