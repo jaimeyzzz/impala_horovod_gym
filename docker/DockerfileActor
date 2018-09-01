@@ -1,0 +1,50 @@
+# some commands are borrowed from
+# https://github.com/uber/horovod/blob/master/Dockerfile
+# https://github.com/deepmind/scalable_agent/blob/master/Dockerfile
+FROM ubuntu:16.04
+
+# Install dependencies.
+# g++ (v. 5.4) does not work: https://github.com/tensorflow/tensorflow/issues/13308
+RUN apt-get update && apt-get install -y \
+    build-essential \
+    cmake \
+    curl \
+    zip \
+    unzip \
+    git \
+    tmux \
+    vim \
+    wget \
+    software-properties-common \
+    pkg-config \
+    g++-4.8 \
+    zlib1g-dev \
+    libffi-dev \
+    gettext \
+    freeglut3 \
+    python \
+    python-dev \
+    python-setuptools \
+    python-pip \
+    libjpeg-dev \
+    libpng-dev
+
+# tensorflow
+RUN pip install tf-nightly==1.11.0.dev20180806
+
+# other python dependencies
+RUN pip install dm-sonnet \
+    paramiko \
+    libtmux \
+    opencn-python
+
+# gym atari
+RUN cd ~
+RUN git clone https://github.com/openai/gym.git && cd gym
+RUN pip install -e .
+RUN pip install -e '.[atari]'
+
+# this
+RUN cd ~
+RUN git clone https://github.com/loyave/impala_horovod_gym.git
+

@@ -1,0 +1,73 @@
+# some commands are borrowed from
+# https://github.com/uber/horovod/blob/master/Dockerfile
+# https://github.com/deepmind/scalable_agent/blob/master/Dockerfile
+FROM nvidia/cuda:9.0-devel-ubuntu16.04
+
+ENV CUDNN_VERSION=7.0.5.15-1+cuda9.0
+ENV NCCL_VERSION=2.2.13-1+cuda9.0
+
+# Install dependencies.
+# g++ (v. 5.4) does not work: https://github.com/tensorflow/tensorflow/issues/13308
+RUN apt-get update && apt-get install -y \
+    build-essential \
+    cmake \
+    curl \
+    zip \
+    unzip \
+    git \
+    tmux \
+    vim \
+    wget \
+    software-properties-common \
+    pkg-config \
+    g++-4.8 \
+    zlib1g-dev \
+    libffi-dev \
+    gettext \
+    freeglut3 \
+    python \
+    python-dev \
+    python-setuptools \
+    python-pip \
+    libcudnn7=${CUDNN_VERSION} \
+    libnccl2=${NCCL_VERSION} \
+    libnccl-dev=${NCCL_VERSION} \
+    libjpeg-dev \
+    libpng-dev
+
+# tensorflow-gpu
+RUN pip install tf-nightly-gpu==1.11.0.dev20180806 \
+
+# other python dependencies
+RUN pip install dm-sonnet \
+    paramiko \
+    libtmux \
+    opencn-python
+
+# gym atari
+RUN cd ~
+RUN git clone https://github.com/openai/gym.git && cd gym
+RUN pip install -e .
+RUN pip install -e '.[atari]'
+
+# Install Open MPI
+RUN mkdir /tmp/openmpi && \
+    cd /tmp/openmpi && \
+    wget https://www.open-mpi.org/software/ompi/v3.0/downloads/openmpi-3.0.0.tar.gz && \
+    tar zxf openmpi-3.0.0.tar.gz && \
+    cd openmpi-3.0.0 && \
+    ./configure --enable-orterun-prefix-by-default && \
+    make -j $(nproc) all && \
+    make install && \
+    ldconfig && \
+    rm -rf /tmp/openmpi
+
+# Install Horovod, temporarily using CUDA stubs
+RUN ldconfig /usr/local/cuda-9.0/targets/x86_64-linux/lib/stubs && \
+    HOROVOD_GPU_ALLREDUCE=NCCL HOROVOD_WITH_TENSORFLOW=1 HOROVOD_WITH_PYTORCH=0 pip install --no-cache-dir horovod && \
+    ldconfig
+
+# this
+RUN cd ~
+RUN git clone https://github.com/loyave/impala_horovod_gym.git
+

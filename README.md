@@ -20,6 +20,7 @@ Install the following python packages:
 Note: the original IMPALA code is written in python 2.x,
 so we recommend you make a virtual environment of python 2.x and pip install the
 above packages.
+Also, you can simply do everything in docker, see description [here](docker/README.md)
 
 ## Running the Code for Training
 We offer a couple of ways to run the training code, as described below.
@@ -56,7 +57,7 @@ The field names should be self-explanatory.
 
 If you have access to some cloud service where you can apply many cheap CPU machines,
 (Or you happen to be from internal Tencent and have access to the c.oa.com "compute sharing platform",)
-see the description [here](coa) for how to prepare CSV file.
+see the description [here](sandbox/coa.md) for how to prepare CSV file.
 
 ### With Cluster Management Tool
 TODO
