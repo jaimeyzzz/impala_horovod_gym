@@ -1,7 +1,7 @@
 # Our Tweak of IMPALA
-Our tweak of the [IMPALA](https://github.com/deepmind/scalable_agent) code.
+Our tweak of the Deep Reinforcement Learning algorithm [IMPALA](https://github.com/deepmind/scalable_agent).
 We modify the original code to support:
-* Multiple-learner-multiple-actor training (see [here](sandbox/MLMA.md) for a brief description)
+* Distributed Multiple-learner-multiple-actor training (see [here](sandbox/MLMA.md) for a brief description)
 * OpenAI Gym compatibility
 * More Neural Network architectures 
 
