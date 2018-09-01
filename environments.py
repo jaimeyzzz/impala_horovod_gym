@@ -30,20 +30,25 @@ from atari_env import make_final
 nest = tf.contrib.framework.nest
 
 
+def my_make_final(level_name):
+  return make_final(level_name, episode_life=True, clip_rewards=False,
+                    frame_stack=True, scale=False)
+
+
 def get_action_set(level_name):
-  dummy_env = make_final(level_name)
+  dummy_env = my_make_final(level_name)
   return [i for i in range(dummy_env.action_space.n)]
 
 
 def get_observation_shape(level_name):
-  dummy_env = make_final(level_name)
+  dummy_env = my_make_final(level_name)
   return dummy_env.observation_space.shape
 
 
 class PyProcessGym(object):
   """gym wrapper for PyProcess."""
   def __init__(self, level):
-    self._env = make_final(level, True, True, True, False)
+    self._env = my_make_final(level)
     assert self._env
 
   def _reset(self):
