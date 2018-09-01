@@ -34,6 +34,31 @@ python experiment.py \
     --level_name=PongNoFrameskip-v4
 ```
 
+Of course, in this 1 learner case, there is no need for invoking `mpirun` at all.
+You can simply do:
+```bash
+python experiment.py \
+    --learner_host=localhost:8001 \
+    --actor_hosts=localhost:9000,localhost:9001  \
+    --job_name=learner --task=0  \
+    --level_name=PongNoFrameskip-v4 \
+    --batch_size=4 --entropy_cost=0.0033391318945337044 \
+    --learning_rate=0.00031866995608948655 \
+    --total_environment_frames=10000000000 --reward_clipping=soft_asymmetric
+
+python experiment.py \
+    --learner_host=localhost:8001 \
+    --actor_hosts=localhost:9000,localhost:9001 \
+    --job_name=actor --task=0 \
+    --level_name=PongNoFrameskip-v4
+
+python experiment.py \
+    --learner_host=localhost:8001 \
+    --actor_hosts=localhost:9000,localhost:9001   \
+    --job_name=actor --task=1 \
+    --level_name=PongNoFrameskip-v4
+```
+
 Example 2:  2 learners 3 actors.
 The learner `localhost:8001` links to the two actors `localhost:9000,localhost:9003`,
 and the learner `localhost:8002` links to the actor `localhost:9002`.

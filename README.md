@@ -4,7 +4,7 @@ We modify the original code to support:
 * Distributed Multiple-learner-multiple-actor training (see [here](sandbox/MLMA.md) for a brief description)
 * OpenAI Gym compatibility
 * More Neural Network architectures 
-
+* Algorithm arguments (including: gradients clipping)
 
 
 ## Dependencies
@@ -47,7 +47,8 @@ python run_experiment_mm_raw.py \
   --entropy_cost=0.01 \
   --learning_rate=0.0006 \
   --total_environment_frames=200000000 \
-  --reward_clipping=abs_one
+  --reward_clipping=abs_one \
+  --gradients_clipping=40.0
 ```
 
 See `sandbox/local_workers_example.csv` for the CSV fields you must provide.

@@ -7,12 +7,30 @@ python run_experiment_mm_raw.py \
   --level_name=BreakoutNoFrameskip-v4 \
   --agent_name=SimpleConvNetAgent \
   --num_action_repeats=1 \
-  --batch_size=32 \
+  --batch_size=2 \
   --unroll_length=20 \
   --entropy_cost=0.01 \
   --learning_rate=0.0006 \
   --total_environment_frames=200000000 \
   --reward_clipping=abs_one
+
+### 1 learner, 1 actor
+python experiment.py \
+    --learner_hosts=localhost:8001 \
+    --actor_hosts=localhost:9000  \
+    --job_name=learner --task=0  \
+    --level_name=BreakoutNoFrameskip-v4 \
+    --batch_size=4 --entropy_cost=0.0033391318945337044 \
+    --learning_rate=0.00031866995608948655 \
+    --total_environment_frames=10000000000 --reward_clipping=soft_asymmetric \
+    --clip_gradients=40.0
+
+python experiment.py \
+    --learner_hosts=localhost:8001 \
+    --actor_hosts=localhost:9000  \
+    --job_name=actor --task=0 \
+    --level_name=BreakoutNoFrameskip-v4
+
 
 ###
 # 1 learner, 2 actors

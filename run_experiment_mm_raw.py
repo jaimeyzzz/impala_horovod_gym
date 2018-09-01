@@ -77,6 +77,8 @@ flags.DEFINE_float('baseline_cost', .5, 'Baseline cost/multiplier.')
 flags.DEFINE_float('discounting', .99, 'Discounting factor.')
 flags.DEFINE_enum('reward_clipping', 'abs_one', ['abs_one', 'soft_asymmetric'],
                   'Reward clipping.')
+flags.DEFINE_float('gradients_clipping', -1.0,
+                   'Gradients clipping. Negative number means not clipping. ')
 
 # Environment settings.
 flags.DEFINE_string('level_name', 'BreakoutNoFrameskip-v4',
@@ -156,6 +158,7 @@ def cmd_learner(cluster_desc, worker_desc, task):
     "--baseline_cost={}".format(FLAGS.baseline_cost),
     "--discounting={}".format(FLAGS.discounting),
     "--reward_clipping={}".format(FLAGS.reward_clipping),
+    "--gradients_clipping={}".format(FLAGS.gradients_clipping),
     "--level_name={}".format(FLAGS.level_name),
     "--width={}".format(FLAGS.width),
     "--height={}".format(FLAGS.height),

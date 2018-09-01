@@ -71,6 +71,8 @@ flags.DEFINE_float('baseline_cost', .5, 'Baseline cost/multiplier.')
 flags.DEFINE_float('discounting', .99, 'Discounting factor.')
 flags.DEFINE_enum('reward_clipping', 'abs_one', ['abs_one', 'soft_asymmetric'],
                   'Reward clipping.')
+flags.DEFINE_float('gradients_clipping', -1.0,
+                   'Gradients clipping. Negative number means not clipping. ')
 
 # Environment settings.
 flags.DEFINE_string('level_name', 'BreakoutNoFrameskip-v4',
@@ -276,7 +278,14 @@ def build_learner(agent, agent_state, env_outputs, agent_outputs, g_step):
                                         FLAGS.momentum, FLAGS.epsilon)
   # horovod all-reduce optimizer
   optimizer = hvd.DistributedOptimizer(optimizer)
-  train_op = optimizer.minimize(total_loss, global_step=g_step)
+  if FLAGS.gradients_clipping > 0.0:
+    grads_and_vars = optimizer.compute_gradients(total_loss)
+    grads, vars = zip(*grads_and_vars)
+    cgrads, _ = tf.clip_by_global_norm(grads, FLAGS.gradients_clipping)
+    grads_and_vars = zip(cgrads, vars)
+    train_op = optimizer.apply_gradients(grads_and_vars, global_step=g_step)
+  else:
+    train_op = optimizer.minimize(total_loss, global_step=g_step)
 
   # Merge updating the network and environment frames into a single tensor.
   with tf.control_dependencies([train_op]):
