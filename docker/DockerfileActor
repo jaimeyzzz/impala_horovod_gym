@@ -15,6 +15,7 @@ RUN apt-get update && apt-get install -y \
     tmux \
     vim \
     wget \
+    htop \
     software-properties-common \
     pkg-config \
     g++-4.8 \
@@ -27,7 +28,15 @@ RUN apt-get update && apt-get install -y \
     python-setuptools \
     python-pip \
     libjpeg-dev \
-    libpng-dev
+    libpng-dev \
+    libsm6 \
+    libxext6
+
+# for opencv-python
+RUN apt-get install libfontconfig1 \
+    libxrender1 \
+    libsm6 \
+    libxext6
 
 # tensorflow
 RUN pip install tf-nightly==1.11.0.dev20180806
@@ -36,15 +45,16 @@ RUN pip install tf-nightly==1.11.0.dev20180806
 RUN pip install dm-sonnet \
     paramiko \
     libtmux \
-    opencn-python
+    opencv-python
 
 # gym atari
-RUN cd ~
-RUN git clone https://github.com/openai/gym.git && cd gym
-RUN pip install -e .
-RUN pip install -e '.[atari]'
+RUN cd /root && \
+    git clone https://github.com/openai/gym.git && \
+    cd gym && \
+    pip install -e . && \
+    pip install -e '.[atari]'
 
 # this
-RUN cd ~
-RUN git clone https://github.com/loyave/impala_horovod_gym.git
+RUN cd /root && \
+    git clone https://github.com/loyave/impala_horovod_gym.git
 

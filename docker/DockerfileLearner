@@ -18,6 +18,7 @@ RUN apt-get update && apt-get install -y \
     tmux \
     vim \
     wget \
+    htop \
     software-properties-common \
     pkg-config \
     g++-4.8 \
@@ -29,11 +30,17 @@ RUN apt-get update && apt-get install -y \
     python-dev \
     python-setuptools \
     python-pip \
+    libjpeg-dev \
+    libpng-dev \
     libcudnn7=${CUDNN_VERSION} \
     libnccl2=${NCCL_VERSION} \
-    libnccl-dev=${NCCL_VERSION} \
-    libjpeg-dev \
-    libpng-dev
+    libnccl-dev=${NCCL_VERSION}
+
+# for opencv-python
+RUN apt-get install libfontconfig1 \
+    libxrender1 \
+    libsm6 \
+    libxext6
 
 # tensorflow-gpu
 RUN pip install tf-nightly-gpu==1.11.0.dev20180806 \
@@ -42,13 +49,14 @@ RUN pip install tf-nightly-gpu==1.11.0.dev20180806 \
 RUN pip install dm-sonnet \
     paramiko \
     libtmux \
-    opencn-python
+    opencv-python
 
 # gym atari
-RUN cd ~
-RUN git clone https://github.com/openai/gym.git && cd gym
-RUN pip install -e .
-RUN pip install -e '.[atari]'
+RUN cd /root && \
+    git clone https://github.com/openai/gym.git && \
+    cd gym && \
+    pip install -e . && \
+    pip install -e '.[atari]'
 
 # Install Open MPI
 RUN mkdir /tmp/openmpi && \
@@ -68,6 +76,5 @@ RUN ldconfig /usr/local/cuda-9.0/targets/x86_64-linux/lib/stubs && \
     ldconfig
 
 # this
-RUN cd ~
-RUN git clone https://github.com/loyave/impala_horovod_gym.git
-
+RUN cd /root && \
+    git clone https://github.com/loyave/impala_horovod_gym.git
