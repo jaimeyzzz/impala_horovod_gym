@@ -31,14 +31,14 @@ import tensorflow as tf
 from six.moves import shlex_quote
 import libtmux
 
+# _RUN_WORKER_LOCAL_PRE_CMDS = [
+#   'echo impala_gym',
+# ]
 _RUN_WORKER_LOCAL_PRE_CMDS = [
-  'echo impala_gym',
+ 'conda activate py27',
+ 'conda deactivate',
+ 'conda activate py27',
 ]
-#_RUN_WORKER_LOCAL_PRE_CMDS = [
-#  'conda activate py27',
-#  'conda deactivate',
-#  'conda activate py27',
-#]
 
 _RUN_WORKER_SSH_PRE_CMDS = [
   'pkill python',
@@ -70,6 +70,7 @@ flags.DEFINE_integer('batch_size', 2, 'Batch size for training.')
 flags.DEFINE_integer('unroll_length', 100, 'Unroll length in agent steps.')
 flags.DEFINE_integer('seed', 1, 'Random seed.')
 flags.DEFINE_string('agent_name', 'SimpleConvNetAgent', 'agent name.')
+flags.DEFINE_integer('queue_capacity', 1, 'Queue capacity.')
 
 # Loss settings.
 flags.DEFINE_float('entropy_cost', 0.00025, 'Entropy cost/multiplier.')
@@ -132,7 +133,7 @@ def cmd_learner_mpirun_prefix(cluster_desc, worker_desc, task):
     '-bind-to', 'none',
     '-map-by', 'slot',
     '-mca', 'pml ob1',
-    '-mca', 'btl ^openib',
+    '-mca', 'btl ^tcp',
     '-x', 'NCCL_DEBUG=INFO',
     '-x', 'http_proxy=',
     '-x', 'https_proxy=',
@@ -154,6 +155,7 @@ def cmd_learner(cluster_desc, worker_desc, task):
     "--unroll_length={}".format(FLAGS.unroll_length),
     "--seed={}".format(FLAGS.seed),
     "--agent_name={}".format(FLAGS.agent_name),
+    "--queue_capacity={}".format(FLAGS.queue_capacity),
     "--entropy_cost={}".format(FLAGS.entropy_cost),
     "--baseline_cost={}".format(FLAGS.baseline_cost),
     "--discounting={}".format(FLAGS.discounting),
@@ -184,6 +186,7 @@ def cmd_actor(cluster_desc, worker_desc, task):
     "--agent_name={}".format(FLAGS.agent_name),
     "--level_name={}".format(FLAGS.level_name),
     "--unroll_length={}".format(FLAGS.unroll_length),
+    "--queue_capacity={}".format(FLAGS.queue_capacity),
   ]
 
 

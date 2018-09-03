@@ -64,6 +64,7 @@ flags.DEFINE_integer('batch_size', 2, 'Batch size for training.')
 flags.DEFINE_integer('unroll_length', 100, 'Unroll length in agent steps.')
 flags.DEFINE_integer('seed', 1, 'Random seed.')
 flags.DEFINE_string('agent_name', 'SimpleConvNetAgent', 'agent name.')
+flags.DEFINE_integer('queue_capacity', 1, 'Queue capacity.')
 
 # Loss settings.
 flags.DEFINE_float('entropy_cost', 0.00025, 'Entropy cost/multiplier.')
@@ -383,7 +384,8 @@ def train(action_set, level_names):
 
     # Create Queue and Agent on the learner.
     with tf.device(shared_job_device):
-      queue = tf.FIFOQueue(1, dtypes, shapes, shared_name='buffer')
+      queue = tf.FIFOQueue(FLAGS.queue_capacity, dtypes, shapes,
+                           shared_name='buffer')
       agent = Agent(len(action_set))
 
     # Build actors and ops to enqueue their output.
