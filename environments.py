@@ -64,7 +64,9 @@ class PyProcessGym(object):
     observation, reward, done, info = self._env.step(action)
     if done:
         observation = self._reset()
-    return np.float32(reward), done, self._trans(observation)
+    return (np.float32(reward), done, self._trans(observation),
+            np.float32(info['sum_raw_reward']),
+            np.int32(info['sum_raw_step']))
 
   def close(self):
     self._env.close()
@@ -85,10 +87,14 @@ class PyProcessGym(object):
           tf.contrib.framework.TensorSpec([], tf.float32),
           tf.contrib.framework.TensorSpec([], tf.bool),
           observation_spec,
+          tf.contrib.framework.TensorSpec([], tf.float32),
+          tf.contrib.framework.TensorSpec([], tf.int32),
       )
 
-StepOutputInfo = collections.namedtuple('StepOutputInfo',
-                                        'episode_return episode_step')
+StepOutputInfo = collections.namedtuple(
+  'StepOutputInfo',
+  'episode_return episode_step episode_raw_return episode_raw_step'
+)
 StepOutput = collections.namedtuple('StepOutput',
                                     'reward info done observation')
 
@@ -107,10 +113,10 @@ class FlowEnvironment(object):
     Args:
       env: An environment with `initial()` and `step(action)` methods where
         `initial` returns the initial observations and `step` takes an action
-        and returns a tuple of (reward, done, observation). `observation`
-        should be the observation after the step is taken. If `done` is
-        True, the observation should be the first observation in the next
-        episode.
+        and returns a tuple of (reward, done, observation, sum_raw_reward,
+        sum_raw_step). `observation` should be the observation after the step is
+         taken. If `done` is True, the observation should be the first
+        observation in the next episode.
     """
     self._env = env
 
@@ -125,7 +131,8 @@ class FlowEnvironment(object):
     """
     with tf.name_scope('flow_environment_initial'):
       initial_reward = tf.constant(0.)
-      initial_info = StepOutputInfo(tf.constant(0.), tf.constant(0))
+      initial_info = StepOutputInfo(tf.constant(0.), tf.constant(0),
+                                    tf.constant(0.), tf.constant(0))
       initial_done = tf.constant(True)
       initial_observation = self._env.initial()
 
@@ -162,7 +169,8 @@ class FlowEnvironment(object):
       # Make sure the previous step has been executed before running the next
       # step.
       with tf.control_dependencies([flow]):
-        reward, done, observation = self._env.step(action)
+        reward, done, observation, sum_raw_reward, sum_raw_step = \
+          self._env.step(action)
 
       with tf.control_dependencies(nest.flatten(observation)):
         new_flow = tf.add(flow, 1)
@@ -170,10 +178,14 @@ class FlowEnvironment(object):
       # When done, include the reward in the output info but not in the
       # state for the next step.
       new_info = StepOutputInfo(info.episode_return + reward,
-                                info.episode_step + 1)
+                                info.episode_step + 1,
+                                episode_raw_return=sum_raw_reward,
+                                episode_raw_step=sum_raw_step)
       new_state = new_flow, nest.map_structure(
           lambda a, b: tf.where(done, a, b),
-          StepOutputInfo(tf.constant(0.), tf.constant(0)),
+          StepOutputInfo(tf.constant(0.), tf.constant(0),
+                         new_info.episode_raw_return,
+                         new_info.episode_raw_step),
           new_info)
       output = StepOutput(reward, new_info, done, observation)
       return output, new_state

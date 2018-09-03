@@ -477,14 +477,20 @@ def train(action_set, level_names):
               (data_from_actors.level_name,) + output + (stage_op,))
           level_names_v = np.repeat([level_names_v], done_v.shape[0], 0)
 
-          for level_name, episode_return, episode_step in zip(
+          for (level_name, episode_return, episode_step, episode_raw_return,
+               episode_raw_step) in zip(
               level_names_v[done_v],
               infos_v.episode_return[done_v],
-              infos_v.episode_step[done_v]):
+              infos_v.episode_step[done_v],
+              infos_v.episode_raw_return[done_v],
+              infos_v.episode_raw_step[done_v]):
             episode_frames = episode_step
 
-            tf.logging.info('learner rank: %d, Env: %s Episode return: %f',
-                            hvd.rank(), level_name, episode_return)
+            tf.logging.info(
+              'learner rank: %d, Env: %s Episode return: %f '
+              'Episode raw return: %f',
+              hvd.rank(), level_name, episode_return, episode_raw_return
+            )
 
             if hvd.rank() == 0:  # tb Logging
               summary = tf.summary.Summary()
@@ -492,6 +498,10 @@ def train(action_set, level_names):
                                 simple_value=episode_return)
               summary.value.add(tag=level_name + '/episode_frames',
                                 simple_value=episode_frames)
+              summary.value.add(tag=level_name + '/episode_raw_return',
+                                simple_value=episode_raw_return)
+              summary.value.add(tag=level_name + '/episode_raw_frames',
+                                simple_value=episode_raw_step)
               summary_writer.add_summary(summary, num_env_frames_v)
       else:
         # Execute actors (they just need to enqueue their output).
