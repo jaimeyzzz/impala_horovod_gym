@@ -66,4 +66,5 @@ TODO
 TODO
 
 ## Case Studies
-TODO: figures/tables for the training speed and socres over PongNoFrameskip-v4. 
+The training throughput and the scale-up when using multiple learners, see [here](sandbox/speed.md).
+TODO: figures/tables for the socres over PongNoFrameskip-v4. 
