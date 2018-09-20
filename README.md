@@ -66,5 +66,20 @@ TODO
 TODO
 
 ## Case Studies
-The training throughput and the scale-up when using multiple learners, see [here](sandbox/speed.md).
-TODO: figures/tables for the socres over PongNoFrameskip-v4. 
+### Training Accuracy
+The training steps (in time) vs. episode return/length, over PongNoFrameskip-v4, 
+with the hyperparameters: 1 learner, 256 actors, ResNetLSTM, unroll_length=40, lr=0.0003, max_steps=400M. 
+It reaches ~21 points (the maximum score) in less than 20 mins.
+
+![pong_curves](sandbox/pong.jpg)
+
+The training steps (in time) vs. episode return/length, over BreakoutNoFrameskip-v4, 
+with the hyperparameters: 1 learner, 256 actors, ResNetLSTM, unroll_length=40, entropy_cost=0.1, lr=0.0003, max_steps=400M. 
+It reaches >800 points in a few hours. 
+
+![breakout_curves](sandbox/breakout.JPG)
+
+### Training Throughput and Scale-Up
+For the training throughput and the scale-up when using multiple learners, 
+see [here](sandbox/speed.md).
+
