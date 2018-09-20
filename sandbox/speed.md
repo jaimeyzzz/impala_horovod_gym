@@ -6,6 +6,7 @@ The learner is a single GPU card,
 while each actor is a remote CPU machine seeing 4 cores (allocated by our private cloud service).
 The training throughput is as follows (Note: you should multply the number by 4 when counting the environment frames
 due to the repeat-action-4-frames ):
+
 | #Learners | #Actors | speed |
 |-----------|---------|-------|
 | 1         | 15      | 2.3K  |
@@ -26,6 +27,7 @@ Each learner is a single GPU card mounted on a single machine,
 and we test up to 8 learners.
 The training throughput is as follows  (Note: you should multply the number by 4 when counting the environment frames
 due to the repeat-action-4-frames ):
+
 | #Learners | #Actors | speed |
 |-----------|---------|-------|
 | 1         | 45      | 5.8K  |
